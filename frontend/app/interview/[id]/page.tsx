@@ -90,9 +90,7 @@ export default function InterviewPage() {
 
         // Fetch questions (filter by position if available in interview data)
         // interviewData.position_type is the code (e.g. "virtual_assistant")
-        const questionsResponse = interviewData.position_type
-          ? await questionAPI.getQuestions({ position: interviewData.position_type })
-          : await questionAPI.getQuestions();
+        const questionsResponse = await questionAPI.getQuestions(interviewId);
 
         console.log("Questions Response:", questionsResponse.data);
         let questionsData = questionsResponse.data.questions || questionsResponse.data;

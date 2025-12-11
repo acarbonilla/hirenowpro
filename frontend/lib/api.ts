@@ -89,15 +89,15 @@ export const applicantAPI = {
 
 export const interviewAPI = {
   // Create new interview
-  createInterview: (data: { applicant: number; interview_type: string; position_type: number }) =>
-    api.post("/interviews/", data),
+  createInterview: (data: { applicant_id: number; interview_type: string; position_code: string }) =>
+    api.post("/public/interviews/", data),
 
   // Alias for createInterview
   create: (data: { applicant: number; interview_type?: string; position_type: number }) =>
     api.post("/interviews/", { ...data, interview_type: data.interview_type || "initial_ai" }),
 
   // Get interview details
-  getInterview: (id: number) => api.get(`/interviews/${id}/`),
+  getInterview: (id: number) => api.get(`/public/interviews/${id}/`),
 
   // Upload video response (no immediate analysis)
   uploadVideoResponse: (interviewId: number, formData: FormData) => {
@@ -115,7 +115,7 @@ export const interviewAPI = {
   completeInterview: (id: number) => api.post(`/interviews/${id}/complete/`),
 
   // List interviews
-  listInterviews: (params?: any) => api.get("/interviews/", { params }),
+  listInterviews: (params?: any) => api.get("/public/interviews/", { params }),
 
   // Get interview analysis
   getAnalysis: (id: number) => api.get(`/interviews/${id}/analysis/`),
@@ -161,7 +161,7 @@ export const trainingAPI = {
 
 export const questionAPI = {
   // Get all active questions (with optional position and type filters)
-  getQuestions: (params?: { position?: string; type?: string }) => api.get("/questions/", { params }),
+  getQuestions: (interviewId: number) => api.get(`/public/interviews/${interviewId}/questions/`),
 
   // Get single question
   getQuestion: (id: number) => api.get(`/questions/${id}/`),

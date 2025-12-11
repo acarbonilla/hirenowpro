@@ -26,6 +26,7 @@ urlpatterns = [
     path('api/', include('accounts.urls')),
     path('api/', include('applicants.urls')),
     path('api/', include('interviews.urls')),
+    path('api/public/', include('interviews.public.urls')),
     path('api/', include('results.urls')),
     path('api/', include('monitoring.urls')),
     path('api/training/', include('training.urls')),

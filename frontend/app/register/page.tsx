@@ -138,7 +138,7 @@ export default function RegisterPage() {
           console.log("DEBUG selectedPosition:", selectedPosition);
           console.log("DEBUG applicant:", applicant);
 
-          const posRes = await api.get("/position-types/", { params: { position_code: selectedPosition } });
+          const posRes = await api.get("/public/position-types/", { params: { position_code: selectedPosition } });
           const first = posRes.data?.results?.[0] || posRes.data?.[0];
           const positionTypeId = first?.id;
           console.log("DEBUG resolvedPositionType:", positionTypeId);
@@ -148,9 +148,9 @@ export default function RegisterPage() {
           }
 
           const interviewResponse = await interviewAPI.createInterview({
-            applicant: applicant.id,
+            applicant_id: applicant.id,
             interview_type: "initial_ai",
-            position_type: positionTypeId,
+            position_code: selectedPosition,
           });
 
           console.log("DEBUG interviewResponse:", interviewResponse?.data);

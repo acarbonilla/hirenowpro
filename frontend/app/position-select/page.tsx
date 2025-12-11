@@ -132,15 +132,15 @@ function PositionSelectPageInner() {
       }
 
       // Create interview for the applicant with position type
-      const posRes = await api.get("/position-types/", { params: { position_code: selectedPosition } });
+      const posRes = await api.get("/public/position-types/", { params: { position_code: selectedPosition } });
       const first = posRes.data?.results?.[0] || posRes.data?.[0];
       const positionTypeId = first?.id;
       if (!positionTypeId) throw new Error("Position type not found");
 
       const interviewResponse = await interviewAPI.createInterview({
-        applicant: typeof appId === "string" ? parseInt(appId) : (appId as number),
+        applicant_id: typeof appId === "string" ? parseInt(appId) : (appId as number),
         interview_type: "initial_ai",
-        position_type: positionTypeId,
+        position_code: selectedPosition,
       });
       const interview = interviewResponse.data.interview || interviewResponse.data;
 
