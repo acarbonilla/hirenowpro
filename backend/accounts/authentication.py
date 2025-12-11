@@ -54,6 +54,7 @@ class ApplicantTokenAuthentication(BaseAuthentication):
 
     def authenticate(self, request):
         auth_header = request.headers.get("Authorization") or ""
+        print("DEBUG_TOKEN_AUTH:", auth_header)
         if not auth_header.startswith(f"{self.keyword} "):
             return None
 
@@ -112,4 +113,5 @@ class ApplicantTokenAuthentication(BaseAuthentication):
 
         # Mark as authenticated
         setattr(applicant, "is_authenticated", True)
+        print("DEBUG_TOKEN_RESULT:", applicant.id)
         return (applicant, None)

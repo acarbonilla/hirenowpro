@@ -68,6 +68,8 @@ export default function InterviewPage() {
 
         // Fetch interview details
         const token = getApplicantToken();
+        console.log("DEBUG interviewId param:", interviewId);
+        console.log("DEBUG applicantToken:", token);
         if (!token) {
           router.push("/interview-login?missing=true");
           return;

@@ -135,12 +135,13 @@ export default function RegisterPage() {
       // If position is selected, create interview and redirect directly
       if (selectedPosition) {
         try {
-          console.log("Creating interview with position:", selectedPosition);
-          console.log("Applicant ID:", applicant.id);
+          console.log("DEBUG selectedPosition:", selectedPosition);
+          console.log("DEBUG applicant:", applicant);
 
           const posRes = await api.get("/position-types/", { params: { position_code: selectedPosition } });
           const first = posRes.data?.results?.[0] || posRes.data?.[0];
           const positionTypeId = first?.id;
+          console.log("DEBUG resolvedPositionType:", positionTypeId);
           if (!positionTypeId) {
             console.error("DEBUG position-types response:", posRes.data);
             throw new Error("Unable to resolve position type ID");
@@ -152,8 +153,7 @@ export default function RegisterPage() {
             position_type: positionTypeId,
           });
 
-          console.log("Interview Response:", interviewResponse);
-          console.log("Interview Response Data:", interviewResponse.data);
+          console.log("DEBUG interviewResponse:", interviewResponse?.data);
 
           const interview = interviewResponse.data.interview || interviewResponse.data;
           console.log("Interview object:", interview);

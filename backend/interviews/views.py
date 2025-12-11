@@ -239,9 +239,13 @@ class InterviewViewSet(viewsets.ModelViewSet):
     
     def create(self, request, *args, **kwargs):
         """Create new interview"""
+        print("DEBUG_INTERVIEW_CREATE_PAYLOAD:", request.data)
         serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        if not serializer.is_valid():
+            print("DEBUG_INTERVIEW_ERRORS:", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         interview = serializer.save()
+        print("DEBUG_INTERVIEW_CREATED:", interview.id, interview.position_type_id)
 
         # Attach category-based questions using job category derived from position_type
         if interview.position_type_id:

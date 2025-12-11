@@ -216,6 +216,7 @@ class InterviewSerializer(serializers.ModelSerializer):
         qs = InterviewQuestion.objects.filter(is_active=True).order_by('order')
         if obj.position_type_id:
             qs = qs.filter(category_id=obj.position_type_id)
+        print("DEBUG_INTERVIEW_POSITION_TYPE:", obj.position_type_id)
         subroles = getattr(obj, "_job_position_subroles", None)
         if subroles:
             q = Q()
@@ -225,6 +226,7 @@ class InterviewSerializer(serializers.ModelSerializer):
                 refined = qs.filter(q)
                 if refined.exists():
                     qs = refined
+        print("DEBUG_QUESTIONS_FOUND:", qs.count())
         questions = qs
         return InterviewQuestionSerializer(questions, many=True).data
 
@@ -241,6 +243,7 @@ class InterviewCreateSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         validated_data['status'] = 'pending'
+        print("DEBUG_INTERVIEW_INPUT:", validated_data)
         interview = super().create(validated_data)
         # Update applicant status
         applicant = validated_data.get('applicant')
@@ -253,6 +256,7 @@ class InterviewCreateSerializer(serializers.ModelSerializer):
             interview=interview,
             status='queued'
         )
+        print("DEBUG_INTERVIEW_OBJ:", interview)
         return interview
 
 
