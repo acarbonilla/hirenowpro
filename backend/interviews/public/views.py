@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from interviews.models import Interview, InterviewQuestion
 from interviews.type_models import PositionType
+from interviews.type_serializers import JobCategorySerializer
 from applicants.models import Applicant
 from .serializers import (
     PublicInterviewSerializer,
@@ -59,11 +60,8 @@ class PublicQuestionListView(generics.ListAPIView):
 
 class PublicPositionTypeLookupView(generics.ListAPIView):
     permission_classes = [AllowAny]
-    serializer_class = None  # set dynamically
-
-    def get_serializer_class(self):
-        from interviews.type_serializers import JobCategorySerializer
-        return JobCategorySerializer
+    authentication_classes = []
+    serializer_class = JobCategorySerializer
 
     def get_queryset(self):
         qs = PositionType.objects.all()
@@ -71,3 +69,17 @@ class PublicPositionTypeLookupView(generics.ListAPIView):
         if position_code:
             qs = qs.filter(positions__code=position_code)
         return qs
+
+
+class PublicPositionTypeView(generics.GenericAPIView):
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    serializer_class = JobCategorySerializer
+
+    def get(self, request):
+        position_code = request.query_params.get("position_code")
+        qs = PositionType.objects.all()
+        if position_code:
+            qs = qs.filter(code=position_code)
+        serializer = self.get_serializer(qs, many=True)
+        return Response({"results": serializer.data})
