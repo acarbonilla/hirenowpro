@@ -43,12 +43,13 @@ class ApplicantSerializer(serializers.ModelSerializer):
             'longitude',
             'distance_from_office',
             'geo_status',
+            'interview_completed',
             'application_type',
             'documents',
             'created_at',
             'updated_at'
         ]
-        read_only_fields = ['id', 'application_date', 'created_at', 'updated_at', 'distance_from_office', 'application_type', 'geo_status']
+        read_only_fields = ['id', 'application_date', 'created_at', 'updated_at', 'distance_from_office', 'application_type', 'geo_status', 'interview_completed']
     
     def validate_email(self, value):
         """Ensure email is unique"""

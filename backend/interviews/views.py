@@ -477,6 +477,13 @@ class InterviewViewSet(viewsets.ModelViewSet):
         interview.status = 'submitted'
         interview.submission_date = timezone.now()
         interview.save()
+        try:
+            applicant = interview.applicant
+            if applicant:
+                applicant.interview_completed = True
+                applicant.save(update_fields=["interview_completed"])
+        except Exception:
+            pass
         
         # Create processing queue entry
         from processing.models import ProcessingQueue

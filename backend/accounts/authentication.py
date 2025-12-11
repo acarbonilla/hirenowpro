@@ -7,19 +7,42 @@ from datetime import datetime, timedelta
 
 
 APPLICANT_SECRET = getattr(settings, "APPLICANT_SECRET", settings.SECRET_KEY)
-APPLICANT_TOKEN_EXPIRY_HOURS = getattr(settings, "APPLICANT_TOKEN_EXPIRY_HOURS", 12)
+APPLICANT_TOKEN_EXPIRY_HOURS = getattr(settings, "APPLICANT_TOKEN_EXPIRY_HOURS", 6)
+PHASE2_TOKEN_EXPIRY_HOURS = getattr(settings, "PHASE2_TOKEN_EXPIRY_HOURS", 24)
 
 
 def generate_applicant_token(applicant_id, expiry_hours=None):
     expiry_hours = expiry_hours or APPLICANT_TOKEN_EXPIRY_HOURS
-    exp = datetime.utcnow() + timedelta(hours=expiry_hours)
+    expires_at = datetime.utcnow() + timedelta(hours=expiry_hours)
     payload = {
         "sub": "applicant",
         "applicant_id": applicant_id,
-        "exp": exp,
+        "exp": expires_at,
+        "expires_at": expires_at.isoformat(),
         "type": "applicant",
+        "phase": "phase1",
     }
     return jwt.encode(payload, APPLICANT_SECRET, algorithm="HS256")
+
+
+def generate_phase2_token(applicant, expiry_hours=None):
+    expiry_hours = expiry_hours or PHASE2_TOKEN_EXPIRY_HOURS
+    issued_at = datetime.utcnow()
+    expires_at = issued_at + timedelta(hours=expiry_hours)
+    payload = {
+        "sub": "applicant",
+        "applicant_id": applicant.id,
+        "exp": expires_at,
+        "expires_at": expires_at.isoformat(),
+        "type": "applicant",
+        "phase": "phase2",
+        "issued_at": issued_at.isoformat(),
+    }
+    token = jwt.encode(payload, APPLICANT_SECRET, algorithm="HS256")
+    # persist latest phase2 issuance to invalidate older tokens
+    applicant.phase2_token_issued_at = issued_at
+    applicant.save(update_fields=["phase2_token_issued_at"])
+    return token
 
 
 class ApplicantTokenAuthentication(BaseAuthentication):
@@ -38,7 +61,7 @@ class ApplicantTokenAuthentication(BaseAuthentication):
         try:
             payload = jwt.decode(token, APPLICANT_SECRET, algorithms=["HS256"])
         except jwt.ExpiredSignatureError:
-            raise AuthenticationFailed("Applicant token expired")
+            raise AuthenticationFailed("Token expired")
         except jwt.InvalidTokenError:
             # slight delay to reduce brute force attempts
             import time
@@ -56,6 +79,36 @@ class ApplicantTokenAuthentication(BaseAuthentication):
             applicant = Applicant.objects.get(id=applicant_id)
         except Applicant.DoesNotExist:
             raise AuthenticationFailed("Applicant not found")
+
+        # Check custom expiry (expires_at claim)
+        expires_at_str = payload.get("expires_at")
+        if expires_at_str:
+            try:
+                expires_at = datetime.fromisoformat(expires_at_str)
+                if expires_at < datetime.utcnow():
+                    # Log expired attempt
+                    import logging
+                    logger = logging.getLogger(__name__)
+                    logger.warning(f"Expired applicant token for applicant {applicant_id} from {request.META.get('REMOTE_ADDR')}")
+                    raise AuthenticationFailed("Token expired")
+            except Exception:
+                raise AuthenticationFailed("Token expired")
+
+        # Block phase1 tokens if interview already completed
+        phase = payload.get("phase")
+        if getattr(applicant, "interview_completed", False) and phase != "phase2":
+            raise AuthenticationFailed("Interview already completed")
+
+        # For phase2 tokens, ensure matches latest issued_at if recorded
+        if phase == "phase2":
+            issued_at = payload.get("issued_at")
+            if applicant.phase2_token_issued_at and issued_at:
+                try:
+                    issued_dt = datetime.fromisoformat(issued_at)
+                    if issued_dt.replace(tzinfo=None) != applicant.phase2_token_issued_at.replace(tzinfo=None):
+                        raise AuthenticationFailed("Token expired")
+                except Exception:
+                    raise AuthenticationFailed("Token expired")
 
         # Mark as authenticated
         setattr(applicant, "is_authenticated", True)

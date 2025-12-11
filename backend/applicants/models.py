@@ -66,6 +66,8 @@ class Applicant(models.Model):
         default='unknown',
         help_text="Classification of applicant location relative to office geofence"
     )
+    interview_completed = models.BooleanField(default=False, help_text="True when applicant finished interview")
+    phase2_token_issued_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp of latest phase2 token")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
