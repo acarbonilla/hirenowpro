@@ -138,15 +138,11 @@ export default function RegisterPage() {
           console.log("Creating interview with position:", selectedPosition);
           console.log("Applicant ID:", applicant.id);
 
-          let positionTypeId: number | null = null;
-          try {
-            const posRes = await api.get("/job-categories/", { params: { code: selectedPosition } });
-            const first = posRes.data?.results?.[0] || posRes.data?.[0];
-            positionTypeId = first?.id || null;
-          } catch (err) {
-            console.warn("Failed to resolve position type ID, using code fallback");
-          }
+          const posRes = await api.get("/position-types/", { params: { position_code: selectedPosition } });
+          const first = posRes.data?.results?.[0] || posRes.data?.[0];
+          const positionTypeId = first?.id;
           if (!positionTypeId) {
+            console.error("DEBUG position-types response:", posRes.data);
             throw new Error("Unable to resolve position type ID");
           }
 

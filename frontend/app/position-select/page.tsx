@@ -132,7 +132,7 @@ function PositionSelectPageInner() {
       }
 
       // Create interview for the applicant with position type
-      const posRes = await api.get("/job-categories/", { params: { code: selectedPosition } });
+      const posRes = await api.get("/position-types/", { params: { position_code: selectedPosition } });
       const first = posRes.data?.results?.[0] || posRes.data?.[0];
       const positionTypeId = first?.id;
       if (!positionTypeId) throw new Error("Position type not found");

@@ -21,6 +21,7 @@ from .serializers import (
     JobPositionSerializer
 )
 from .type_serializers import JobCategorySerializer, QuestionTypeSerializer
+from .type_serializers import JobCategorySerializer as PositionTypeSerializer
 
 
 class JobCategoryViewSet(viewsets.ModelViewSet):
@@ -112,6 +113,26 @@ class QuestionTypeViewSet(viewsets.ModelViewSet):
         if active_only:
             queryset = queryset.filter(is_active=True)
         return queryset
+
+
+class PositionTypeViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for Position Types (lookup by code or by job position code)
+    """
+
+    queryset = PositionType.objects.all()
+    serializer_class = PositionTypeSerializer
+    permission_classes = [AllowAny()]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        code = self.request.query_params.get("code")
+        position_code = self.request.query_params.get("position_code")
+        if code:
+            qs = qs.filter(code=code)
+        if position_code:
+            qs = qs.filter(positions__code=position_code)
+        return qs
 
 
 class InterviewQuestionViewSet(viewsets.ModelViewSet):
