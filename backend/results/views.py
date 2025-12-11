@@ -22,6 +22,9 @@ from .serializers import (
 )
 from interviews.models import Interview, VideoResponse
 
+from .models import SystemSettings
+
+
 
 class InterviewResultViewSet(viewsets.ModelViewSet):
     """
@@ -68,12 +71,16 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
         if review_queue == 'true':
             # Only show results that need review:
             # 1. No final decision made yet
-            # 2. Score in review range (50-75) OR has AI-detected issues that need review
+            # 2. Score in review range OR has AI-detected issues that need review
+            from .models import SystemSettings
+            passing_threshold = SystemSettings.get_passing_threshold()
+            review_threshold = SystemSettings.get_review_threshold()
+            
             queryset = queryset.filter(final_decision__isnull=True)
-            # Further filter to scores that need review (50-75 range) or applicants that failed AI but might be reconsidered
+            # Further filter to scores that need review or applicants that failed AI but might be reconsidered
             queryset = queryset.filter(
-                models.Q(final_score__gte=50, final_score__lt=75) |  # Review range
-                models.Q(passed=False, final_score__gte=40)  # Failed but close enough to review
+                models.Q(final_score__gte=review_threshold, final_score__lt=passing_threshold) |  # Review range
+                models.Q(passed=False, final_score__gte=review_threshold - 10)  # Failed but close enough to review
             )
         
         # Filter by final decision status
@@ -138,7 +145,16 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
             'position_type': interview.position_type.code if interview.position_type else None,
             'overall_score': result.final_score,
             'passed': result.passed,
-            'recommendation': 'hire' if result.final_score >= 75 else ('review' if 50 <= result.final_score < 75 else 'reject'),
+            'recommendation': (
+                "hire"
+                if result.final_score >= SystemSettings.get_passing_threshold()
+                else (
+                    "review"
+                    if result.final_score >= SystemSettings.get_review_threshold()
+                    else "reject"
+                )
+            ),
+
             'created_at': result.result_date,
             'video_responses': []
         }
@@ -430,3 +446,50 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
             'applicant_status': applicant.status,
             'reapplication_date': applicant.reapplication_date
         })
+
+
+class SystemSettingsViewSet(viewsets.ViewSet):
+    """
+    ViewSet for managing system settings
+    
+    Endpoints:
+    - GET /api/settings/ - Get current settings
+    - PUT /api/settings/ - Update settings (HR/Admin only)
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def list(self, request):
+        """Get current system settings"""
+        from .models import SystemSettings
+        from .settings_serializers import SystemSettingsSerializer
+        
+        settings = SystemSettings.get_settings()
+        serializer = SystemSettingsSerializer(settings)
+        return Response(serializer.data)
+    
+    def update(self, request, pk=None):
+        """Update system settings (HR/Admin only)"""
+        from .models import SystemSettings
+        from .settings_serializers import SystemSettingsSerializer
+        
+        # Check if user has permission (is_staff or is_superuser)
+        if not (request.user.is_staff or request.user.is_superuser):
+            return Response(
+                {'error': 'You do not have permission to modify system settings'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        settings = SystemSettings.get_settings()
+        serializer = SystemSettingsSerializer(settings, data=request.data, partial=True)
+        
+        if serializer.is_valid():
+            # Set who modified it
+            serializer.validated_data['modified_by'] = request.user.get_full_name() or request.user.username
+            serializer.save()
+            
+            return Response({
+                'message': 'Settings updated successfully',
+                'settings': serializer.data
+            })
+        
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)

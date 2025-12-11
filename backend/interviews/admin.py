@@ -1,22 +1,46 @@
 from django.contrib import admin
-from .models import Interview, InterviewQuestion, VideoResponse, AIAnalysis
+from .models import Interview, InterviewQuestion, VideoResponse, AIAnalysis, JobPosition
 from .type_models import PositionType, QuestionType
 
 
 @admin.register(PositionType)
 class PositionTypeAdmin(admin.ModelAdmin):
-    list_display = ['name', 'code', 'is_active', 'order', 'created_at']
+    list_display = ['name', 'code', 'is_active', 'order', 'created_at', 'offices_list']
     list_filter = ['is_active']
     search_fields = ['name', 'code']
     list_editable = ['is_active', 'order']
     fieldsets = (
-        ('Basic Information', {
-            'fields': ('code', 'name', 'description')
+        ('Job Category Information', {
+            'fields': ('code', 'name', 'description', 'offices')
         }),
         ('Settings', {
             'fields': ('is_active', 'order')
         }),
     )
+    filter_horizontal = ('offices',)
+
+    def offices_list(self, obj):
+        return ", ".join(obj.offices.values_list('name', flat=True))
+    offices_list.short_description = 'Offices'
+
+    def has_module_permission(self, request):
+        user = request.user
+        return bool(
+            getattr(user, "is_superuser", False)
+            or user.has_perm("interviews.manage_job_categories")
+        )
+
+    def has_view_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_change_permission(self, request, obj=None):
+        return self.has_module_permission(request)
+
+    def has_add_permission(self, request):
+        return self.has_module_permission(request)
+
+    def has_delete_permission(self, request, obj=None):
+        return self.has_module_permission(request)
 
 
 @admin.register(QuestionType)
@@ -43,7 +67,8 @@ class InterviewQuestionAdmin(admin.ModelAdmin):
     list_editable = ['order', 'is_active']
     fieldsets = (
         ('Question Details', {
-            'fields': ('question_text', 'position_type', 'question_type', 'max_duration')
+            'fields': ('question_text', 'position_type', 'category', 'question_type', 'max_duration', 'tags'),
+            'description': "Tags indicate what subroles this question applies to."
         }),
         ('Display Settings', {
             'fields': ('order', 'is_active')
@@ -73,3 +98,24 @@ class AIAnalysisAdmin(admin.ModelAdmin):
     search_fields = ['video_response__interview__applicant__first_name', 
                      'video_response__interview__applicant__last_name']
     readonly_fields = ['analyzed_at']
+
+
+@admin.register(JobPosition)
+class JobPositionAdmin(admin.ModelAdmin):
+    list_display = ('name', 'code', 'is_active', 'created_by')
+    list_filter = ('is_active',)
+    search_fields = ('name', 'code')
+    readonly_fields = ('created_by',)
+    filter_horizontal = ('offices',)
+    fieldsets = (
+        ('Job Position', {
+            'fields': ('name', 'code', 'description', 'category', 'is_active')
+        }),
+        ('Assignments', {
+            'fields': ('offices', 'subroles'),
+            'description': "Subroles determine which specialized questions this job requires."
+        }),
+        ('Metadata', {
+            'fields': ('created_by',)
+        }),
+    )

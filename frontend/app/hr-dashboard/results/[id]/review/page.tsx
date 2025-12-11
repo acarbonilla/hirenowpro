@@ -9,17 +9,21 @@ import VideoPlayer from "@/components/VideoPlayer";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+// TYPES --------------------------------------------------------------
+
+interface Question {
+  id: number;
+  question_text: string;
+  question_type: string;
+}
+
 interface VideoResponse {
   id: number;
-  question: {
-    id: number;
-    question_text: string;
-    question_type: string;
-  };
-  video_file: string;
-  transcript: string;
+  question: Question;
+  video_file: string | null;
+  transcript: string | null;
   ai_score: number;
-  ai_assessment: string;
+  ai_assessment: string | null;
   sentiment: number | string;
   hr_override_score?: number;
   hr_comments?: string;
@@ -38,61 +42,92 @@ interface ReviewData {
   position_type: string;
   overall_score: number;
   passed: boolean;
-  recommendation: string;
+  recommendation?: string;
   created_at: string;
   video_responses: VideoResponse[];
 }
 
+// COMPONENT --------------------------------------------------------------
+
 export default function ReviewPage() {
-  const params = useParams();
   const router = useRouter();
-  const resultId = params.id as string;
+  const params = useParams();
+
+  // Handle Next.js quirk: params.id can be string | string[]
+  const resultId = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [reviewData, setReviewData] = useState<ReviewData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [selectedVideo, setSelectedVideo] = useState<VideoResponse | null>(null);
+
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
   const [overrideForm, setOverrideForm] = useState({
-    video_response_id: 0,
-    score: 0,
+    score: "",
     comments: "",
   });
-  const [submitting, setSubmitting] = useState(false);
+
   const [showDecisionModal, setShowDecisionModal] = useState(false);
   const [decisionType, setDecisionType] = useState<"hired" | "rejected" | null>(null);
   const [decisionNotes, setDecisionNotes] = useState("");
 
+  // FETCH DATA --------------------------------------------------------------
+
   useEffect(() => {
-    if (resultId) {
-      fetchReviewData();
+    if (!resultId) {
+      setError("Invalid result ID");
+      setLoading(false);
+      return;
     }
+    fetchReviewData();
   }, [resultId]);
 
   const fetchReviewData = async () => {
+    setLoading(true);
+
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const response = await axios.get(`${API_BASE_URL}/results/${resultId}/full-review/`, { headers });
-      setReviewData(response.data);
+      const response = await axios.get(`${API_BASE_URL}/results/${resultId}/full-review/`, { headers, timeout: 20000 });
 
-      if (response.data.video_responses?.length > 0) {
-        setSelectedVideo(response.data.video_responses[0]);
-      }
+      const data: ReviewData = response.data;
+
+      setReviewData(data);
+
+      // pick first video safely
+      const videos = data.video_responses || [];
+      setSelectedVideo(videos.length ? videos[0] : null);
     } catch (err: any) {
+      if (err.response?.status === 401) {
+        router.push("/hr-login");
+        return;
+      }
+
       setError(err.response?.data?.detail || "Failed to load review data");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleOverrideScore = async (videoResponse: VideoResponse) => {
-    if (!overrideForm.score || overrideForm.score < 0 || overrideForm.score > 100) {
-      alert("Please enter a valid score between 0 and 100");
+  // SCORE OVERRIDE --------------------------------------------------------------
+
+  const handleOverrideSubmit = async () => {
+    if (!overrideForm.score) {
+      alert("Enter a score first.");
+      return;
+    }
+    if (!selectedVideo) return;
+
+    const score = Number(overrideForm.score);
+    if (isNaN(score) || score < 0 || score > 100) {
+      alert("Score must be between 0 and 100");
       return;
     }
 
     setSubmitting(true);
+
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -100,16 +135,15 @@ export default function ReviewPage() {
       await axios.post(
         `${API_BASE_URL}/results/${resultId}/override-score/`,
         {
-          video_response_id: videoResponse.id,
-          override_score: overrideForm.score,
-          comments: overrideForm.comments,
+          video_response_id: selectedVideo.id,
+          override_score: score,
+          comments: overrideForm.comments || "",
         },
         { headers }
       );
 
-      alert("Score override saved successfully!");
-      fetchReviewData();
-      setOverrideForm({ video_response_id: 0, score: 0, comments: "" });
+      alert("Override saved!");
+      fetchReviewData(); // refresh
     } catch (err: any) {
       alert(err.response?.data?.detail || "Failed to save override");
     } finally {
@@ -117,10 +151,13 @@ export default function ReviewPage() {
     }
   };
 
+  // FINAL DECISION --------------------------------------------------------------
+
   const handleFinalDecision = async () => {
     if (!decisionType) return;
 
     setSubmitting(true);
+
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
@@ -134,7 +171,8 @@ export default function ReviewPage() {
         { headers }
       );
 
-      alert(`Applicant marked as ${decisionType}! This applicant will be removed from the review queue.`);
+      alert(decisionType === "hired" ? "Applicant marked as HIRED" : "Applicant marked as REJECTED");
+
       router.push("/hr-dashboard/interviews");
     } catch (err: any) {
       alert(err.response?.data?.detail || "Failed to save decision");
@@ -144,50 +182,39 @@ export default function ReviewPage() {
     }
   };
 
-  const openDecisionModal = (type: "hired" | "rejected") => {
-    setDecisionType(type);
-    setDecisionNotes("");
-    setShowDecisionModal(true);
-  };
-
-  const getSentimentColor = (sentiment: number | string) => {
-    if (typeof sentiment === "number") {
-      if (sentiment >= 60) return "text-green-600 bg-green-100";
-      if (sentiment >= 30) return "text-yellow-600 bg-yellow-100";
-      return "text-red-600 bg-red-100";
-    }
-
-    switch (sentiment?.toLowerCase()) {
-      case "positive":
-        return "text-green-600 bg-green-100";
-      case "neutral":
-        return "text-yellow-600 bg-yellow-100";
-      case "negative":
-        return "text-red-600 bg-red-100";
-      default:
-        return "text-gray-600 bg-gray-100";
-    }
-  };
-
-  const formatSentiment = (sentiment: number | string) => {
-    if (typeof sentiment === "number") {
-      if (sentiment >= 60) return `Positive (${sentiment.toFixed(0)})`;
-      if (sentiment >= 30) return `Neutral (${sentiment.toFixed(0)})`;
-      return `Negative (${sentiment.toFixed(0)})`;
-    }
-    return sentiment || "N/A";
-  };
+  // COLOR HELPERS --------------------------------------------------------------
 
   const getScoreColor = (score: number) => {
-    if (score >= 80) return "text-green-600 bg-green-100";
-    if (score >= 60) return "text-yellow-600 bg-yellow-100";
-    return "text-red-600 bg-red-100";
+    if (score >= 80) return "text-green-700 bg-green-100";
+    if (score >= 60) return "text-yellow-700 bg-yellow-100";
+    return "text-red-700 bg-red-100";
   };
+
+  const getSentimentColor = (s: number | string) => {
+    if (typeof s === "number") {
+      if (s >= 60) return "text-green-700 bg-green-100";
+      if (s >= 30) return "text-yellow-700 bg-yellow-100";
+      return "text-red-700 bg-red-100";
+    }
+
+    switch (s?.toLowerCase()) {
+      case "positive":
+        return "text-green-700 bg-green-100";
+      case "neutral":
+        return "text-yellow-700 bg-yellow-100";
+      case "negative":
+        return "text-red-700 bg-red-100";
+      default:
+        return "text-gray-700 bg-gray-100";
+    }
+  };
+
+  // LOADING --------------------------------------------------------------
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-600"></div>
+        <div className="animate-spin h-12 w-12 border-t-2 border-b-2 border-purple-600 rounded-full"></div>
       </div>
     );
   }
@@ -195,292 +222,194 @@ export default function ReviewPage() {
   if (error || !reviewData) {
     return (
       <div className="text-center py-12">
-        <p className="text-red-600 text-lg">{error || "Review data not found"}</p>
+        <p className="text-red-600 text-xl">{error}</p>
         <Link href="/hr-dashboard/results" className="text-purple-600 hover:text-purple-800 mt-4 inline-block">
-          ← Back to Results
+          Back to Results
         </Link>
       </div>
     );
   }
 
+  // UI START --------------------------------------------------------------
+
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex justify-between items-center">
         <div>
-          <Link
-            href="/hr-dashboard/interviews"
-            className="text-purple-600 hover:text-purple-800 text-sm mb-2 inline-block"
-          >
-            ← Back to Review Queue
+          <Link href="/hr-dashboard/interviews" className="text-purple-600 hover:text-purple-800 text-sm">
+            ← Back
           </Link>
           <h1 className="text-3xl font-bold text-gray-900">Interview Review</h1>
-          <p className="text-gray-600 mt-1">Detailed review of {reviewData.applicant.full_name}'s interview</p>
+          <p className="text-gray-600">Reviewing {reviewData.applicant.full_name}</p>
         </div>
-        <div className="flex space-x-3">
-          <Link
-            href={`/hr-dashboard/results/${resultId}/comparison`}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            View Comparison
-          </Link>
-          <button
-            onClick={() => window.print()}
-            className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
-          >
-            Print
-          </button>
-        </div>
-      </div>
 
-      {/* Final Decision Buttons */}
-      <div className="bg-gradient-to-r from-orange-50 to-red-50 border-2 border-orange-200 rounded-xl p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-4">Make Final Hiring Decision</h2>
-        <p className="text-gray-600 mb-4">
-          After reviewing the interview, make your final decision. This will remove the applicant from the review queue.
-        </p>
-        <div className="flex space-x-4">
-          <button
-            onClick={() => openDecisionModal("hired")}
-            className="flex-1 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-semibold flex items-center justify-center space-x-2"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-            </svg>
-            <span>Hire Applicant</span>
-          </button>
-          <button
-            onClick={() => openDecisionModal("rejected")}
-            className="flex-1 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-semibold flex items-center justify-center space-x-2"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-            <span>Reject Applicant</span>
-          </button>
-        </div>
+        <button onClick={() => window.print()} className="px-4 py-2 bg-gray-600 text-white rounded-lg">
+          Print
+        </button>
       </div>
 
       {/* Applicant Info */}
-      <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
+      <div className="bg-white p-6 shadow rounded-xl border">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <div>
-            <p className="text-sm text-gray-600">Applicant Name</p>
-            <p className="text-lg font-semibold text-gray-900">{reviewData.applicant.full_name}</p>
+            <p className="text-sm text-gray-600">Name</p>
+            <p className="font-semibold">{reviewData.applicant.full_name}</p>
           </div>
           <div>
             <p className="text-sm text-gray-600">Email</p>
-            <p className="text-lg font-semibold text-gray-900">{reviewData.applicant.email}</p>
+            <p className="font-semibold">{reviewData.applicant.email}</p>
           </div>
           <div>
             <p className="text-sm text-gray-600">Phone</p>
-            <p className="text-lg font-semibold text-gray-900">{reviewData.applicant.phone}</p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-600">Position</p>
-            <p className="text-lg font-semibold text-gray-900 capitalize">
-              {reviewData.position_type?.replace("_", " ")}
-            </p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-600">Overall Score</p>
-            <p
-              className={`text-lg font-semibold px-3 py-1 rounded inline-block ${getScoreColor(
-                reviewData.overall_score
-              )}`}
-            >
-              {reviewData.overall_score.toFixed(1)}
-            </p>
-          </div>
-          <div>
-            <p className="text-sm text-gray-600">Result</p>
-            <p
-              className={`text-lg font-semibold px-3 py-1 rounded inline-block ${reviewData.passed ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
-                }`}
-            >
-              {reviewData.passed ? "✓ Passed" : "✗ Failed"}
-            </p>
+            <p className="font-semibold">{reviewData.applicant.phone}</p>
           </div>
         </div>
       </div>
 
-      {/* Video Responses */}
+      {/* VIDEO LIST + PLAYER */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Video List */}
-        <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
+        {/* VIDEO LIST */}
+        <div className="bg-white p-6 rounded-xl shadow border">
           <h3 className="text-lg font-semibold mb-4">Questions ({reviewData.video_responses.length})</h3>
+
           <div className="space-y-2">
-            {reviewData.video_responses.map((video, index) => (
-              <button
-                key={video.id}
-                onClick={() => setSelectedVideo(video)}
-                className={`w-full text-left p-3 rounded-lg transition-colors ${selectedVideo?.id === video.id
-                    ? "bg-purple-100 border-2 border-purple-600"
-                    : "bg-gray-50 hover:bg-gray-100 border-2 border-transparent"
+            {reviewData.video_responses.map((v, i) => {
+              const score = v.hr_override_score ?? v.ai_score;
+              return (
+                <button
+                  key={v.id}
+                  onClick={() => setSelectedVideo(v)}
+                  className={`w-full text-left p-3 rounded-lg border ${
+                    selectedVideo?.id === v.id
+                      ? "bg-purple-100 border-purple-600"
+                      : "bg-gray-50 border-transparent hover:bg-gray-100"
                   }`}
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1">
-                    <p className="font-medium text-sm text-gray-900">Question {index + 1}</p>
-                    <p className="text-xs text-gray-600 mt-1 line-clamp-2">{video.question.question_text}</p>
+                >
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <p className="font-semibold text-sm">Question {i + 1}</p>
+                      <p className="text-xs text-gray-600 line-clamp-2">{v.question.question_text}</p>
+                    </div>
+
+                    <span className={`px-2 py-1 rounded text-xs font-semibold ${getScoreColor(score)}`}>
+                      {score.toFixed(0)}
+                    </span>
                   </div>
-                  <span
-                    className={`ml-2 px-2 py-1 text-xs font-semibold rounded ${getScoreColor(
-                      video.hr_override_score || video.ai_score
-                    )}`}
-                  >
-                    {(video.hr_override_score || video.ai_score).toFixed(0)}
-                  </span>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        {/* Video Player and Details */}
+        {/* VIDEO PLAYER + DETAILS */}
         <div className="lg:col-span-2 space-y-6">
           {selectedVideo && (
             <>
-              {/* Video Player */}
-              <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
-                <h3 className="text-lg font-semibold mb-4">Video Response</h3>
-                <VideoPlayer
-                  src={`${process.env.NEXT_PUBLIC_API_URL?.replace("/api", "") || "http://localhost:8000"}${selectedVideo.video_file
+              {/* VIDEO PLAYER */}
+              <div className="bg-white p-6 shadow border rounded-xl">
+                <h3 className="text-lg font-semibold mb-4">Video</h3>
+
+                {selectedVideo.video_file ? (
+                  <VideoPlayer
+                    src={`${process.env.NEXT_PUBLIC_API_URL?.replace("/api", "") || "http://localhost:8000"}${
+                      selectedVideo.video_file
                     }`}
-                  className="w-full aspect-video"
-                />
+                    className="w-full aspect-video"
+                  />
+                ) : (
+                  <p className="text-gray-500 italic">No video uploaded.</p>
+                )}
               </div>
 
-              {/* Question Details */}
-              <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
-                <h3 className="text-lg font-semibold mb-4">Question</h3>
+              {/* QUESTION DETAILS */}
+              <div className="bg-white p-6 shadow border rounded-xl">
+                <h3 className="text-lg font-semibold mb-4">Question Details</h3>
+
                 <p className="text-gray-900">{selectedVideo.question.question_text}</p>
+
                 <div className="mt-3 flex items-center space-x-3">
-                  <span className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">
+                  <span className="px-2 py-1 bg-blue-100 text-blue-700 text-xs rounded">
                     {selectedVideo.question.question_type}
                   </span>
+
                   <span className={`px-2 py-1 text-xs rounded ${getSentimentColor(selectedVideo.sentiment)}`}>
-                    {formatSentiment(selectedVideo.sentiment)}
+                    {typeof selectedVideo.sentiment === "number"
+                      ? selectedVideo.sentiment.toFixed(0)
+                      : selectedVideo.sentiment || "N/A"}
                   </span>
                 </div>
               </div>
 
-              {/* Transcript */}
-              <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
+              {/* TRANSCRIPT */}
+              <div className="bg-white p-6 shadow border rounded-xl">
                 <h3 className="text-lg font-semibold mb-4">Transcript</h3>
-                <div className="bg-gray-50 rounded-lg p-4 max-h-60 overflow-y-auto">
-                  <p className="text-gray-800 whitespace-pre-wrap">
-                    {selectedVideo.transcript || "No transcript available"}
-                  </p>
+                <div className="bg-gray-50 p-4 rounded-lg max-h-60 overflow-y-auto text-gray-800 whitespace-pre-wrap">
+                  {selectedVideo.transcript || "No transcript available."}
                 </div>
               </div>
 
-              {/* AI Assessment Statement */}
-              {selectedVideo.ai_assessment && (
-                <div className="bg-gradient-to-r from-indigo-50 to-blue-50 rounded-xl shadow-md p-6 border-l-4 border-indigo-500">
-                  <div className="flex items-start">
-                    <div className="shrink-0">
-                      <svg className="h-6 w-6 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={2}
-                          d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
-                        />
-                      </svg>
-                    </div>
-                    <div className="ml-4 flex-1">
-                      <h3 className="text-lg font-semibold text-indigo-900 mb-2">AI Analysis Summary</h3>
-                      <p className="text-gray-700 leading-relaxed">{selectedVideo.ai_assessment}</p>
-                    </div>
-                  </div>
-                </div>
-              )}
+              {/* SCORING */}
+              <div className="bg-white p-6 shadow border rounded-xl space-y-4">
+                <h3 className="text-lg font-semibold">Scoring</h3>
 
-              {/* Scoring Section */}
-              <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
-                <h3 className="text-lg font-semibold mb-4">Scoring</h3>
-
-                {/* AI Score */}
-                <div className="mb-4 p-4 bg-blue-50 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-gray-700">AI Score (Original)</span>
+                {/* AUTO SCORE */}
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-700">AI Score</span>
                     <span
-                      className={`px-3 py-1 text-lg font-semibold rounded ${getScoreColor(selectedVideo.ai_score)}`}
+                      className={`px-3 py-1 rounded text-lg font-semibold ${getScoreColor(selectedVideo.ai_score)}`}
                     >
-                      {selectedVideo.ai_score?.toFixed(1) || "0.0"}
+                      {selectedVideo.ai_score.toFixed(1)}
                     </span>
                   </div>
-                  {!selectedVideo.hr_override_score && (
-                    <p className="text-xs text-blue-700 mt-1">✓ This score is being used for final calculation</p>
-                  )}
                 </div>
 
-                {/* HR Override Section */}
-                {selectedVideo.hr_override_score ? (
-                  <div className="p-4 bg-purple-50 rounded-lg border-2 border-purple-200">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="text-sm font-medium text-gray-700">HR Override Score</span>
-                      <span
-                        className={`px-3 py-1 text-lg font-semibold rounded ${getScoreColor(
-                          selectedVideo.hr_override_score
-                        )}`}
-                      >
-                        {selectedVideo.hr_override_score.toFixed(1)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-purple-700 mb-2">✓ This score is being used for final calculation</p>
-
-                    <div className="mt-3 pt-3 border-t border-purple-200">
-                      <p className="text-xs text-gray-600">
-                        Difference: {selectedVideo.hr_override_score > selectedVideo.ai_score ? "+" : ""}
-                        {(selectedVideo.hr_override_score - selectedVideo.ai_score).toFixed(1)} points
-                        {selectedVideo.hr_override_score > selectedVideo.ai_score
-                          ? " (HR increased score)"
-                          : " (HR decreased score)"}
-                      </p>
-                    </div>
-
-                    {selectedVideo.hr_comments && (
-                      <div className="mt-3">
-                        <p className="text-sm font-medium text-gray-700 mb-1">HR Comments:</p>
-                        <p className="text-sm text-gray-800 bg-white p-3 rounded border border-purple-100">
-                          {selectedVideo.hr_comments}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                ) : (
+                {/* OVERRIDE */}
+                {!selectedVideo.hr_override_score ? (
                   <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Override Score (0-100)</label>
-                      <input
-                        type="number"
-                        min="0"
-                        max="100"
-                        value={overrideForm.score || ""}
-                        onChange={(e) => setOverrideForm({ ...overrideForm, score: parseFloat(e.target.value) })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        placeholder="Enter score"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Comments</label>
-                      <textarea
-                        value={overrideForm.comments}
-                        onChange={(e) => setOverrideForm({ ...overrideForm, comments: e.target.value })}
-                        rows={4}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                        placeholder="Add your review comments..."
-                      />
-                    </div>
+                    <input
+                      type="number"
+                      placeholder="Override score (0-100)"
+                      className="w-full border p-2 rounded-lg"
+                      value={overrideForm.score}
+                      onChange={(e) =>
+                        setOverrideForm({
+                          ...overrideForm,
+                          score: e.target.value,
+                        })
+                      }
+                    />
+
+                    <textarea
+                      placeholder="HR comments (optional)"
+                      className="w-full border p-2 rounded-lg"
+                      rows={3}
+                      value={overrideForm.comments}
+                      onChange={(e) =>
+                        setOverrideForm({
+                          ...overrideForm,
+                          comments: e.target.value,
+                        })
+                      }
+                    />
+
                     <button
-                      onClick={() => handleOverrideScore(selectedVideo)}
+                      onClick={handleOverrideSubmit}
                       disabled={submitting}
-                      className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors disabled:opacity-50"
+                      className="w-full bg-purple-600 text-white py-2 rounded-lg hover:bg-purple-700"
                     >
                       {submitting ? "Saving..." : "Save Override"}
                     </button>
+                  </div>
+                ) : (
+                  <div className="p-4 bg-purple-50 rounded-lg">
+                    <p className="font-semibold text-purple-800">
+                      Override Score: {selectedVideo.hr_override_score.toFixed(1)}
+                    </p>
+                    {selectedVideo.hr_comments && (
+                      <p className="mt-2 text-sm text-gray-700">Comments: {selectedVideo.hr_comments}</p>
+                    )}
                   </div>
                 )}
               </div>
@@ -489,43 +418,37 @@ export default function ReviewPage() {
         </div>
       </div>
 
-      {/* Decision Modal */}
+      {/* FINAL DECISION MODAL */}
       {showDecisionModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 max-w-md w-full mx-4">
-            <h3 className="text-xl font-bold text-gray-900 mb-4">
-              Confirm {decisionType === "hired" ? "Hire" : "Rejection"}
-            </h3>
-            <p className="text-gray-600 mb-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-xl shadow max-w-md w-full">
+            <h3 className="text-xl font-bold">Confirm {decisionType === "hired" ? "Hire" : "Reject"}</h3>
+
+            <p className="text-gray-600 mt-2">
               {decisionType === "hired"
-                ? `You are about to mark ${reviewData.applicant.full_name} as HIRED. This will remove them from the review queue.`
-                : `You are about to REJECT ${reviewData.applicant.full_name}. They will be able to reapply in 30 days.`}
+                ? `Mark ${reviewData.applicant.full_name} as HIRED`
+                : `Reject ${reviewData.applicant.full_name}`}
             </p>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-700 mb-2">Notes (Optional)</label>
-              <textarea
-                value={decisionNotes}
-                onChange={(e) => setDecisionNotes(e.target.value)}
-                rows={3}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500"
-                placeholder="Add any notes about this decision..."
-              />
-            </div>
-            <div className="flex space-x-3">
-              <button
-                onClick={() => setShowDecisionModal(false)}
-                disabled={submitting}
-                className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors disabled:opacity-50"
-              >
+
+            <textarea
+              className="w-full mt-4 border p-2 rounded-lg"
+              rows={3}
+              placeholder="Decision notes (optional)"
+              value={decisionNotes}
+              onChange={(e) => setDecisionNotes(e.target.value)}
+            />
+
+            <div className="mt-4 flex space-x-3">
+              <button onClick={() => setShowDecisionModal(false)} className="flex-1 bg-gray-200 py-2 rounded-lg">
                 Cancel
               </button>
               <button
                 onClick={handleFinalDecision}
-                disabled={submitting}
-                className={`flex-1 px-4 py-2 text-white rounded-lg transition-colors disabled:opacity-50 ${decisionType === "hired" ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"
-                  }`}
+                className={`flex-1 text-white py-2 rounded-lg ${
+                  decisionType === "hired" ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"
+                }`}
               >
-                {submitting ? "Processing..." : `Confirm ${decisionType === "hired" ? "Hire" : "Rejection"}`}
+                Confirm
               </button>
             </div>
           </div>

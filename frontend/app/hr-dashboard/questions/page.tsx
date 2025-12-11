@@ -26,6 +26,7 @@ interface Question {
   order: number;
   is_active?: boolean;
   max_duration?: string;
+  tags?: string[];
 }
 
 type QuestionType = "technical" | "behavioral" | "situational" | "general" | "";
@@ -47,6 +48,7 @@ export default function QuestionsPage() {
   const [saving, setSaving] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [newTag, setNewTag] = useState("");
 
   // Form state for add/edit
   const [formData, setFormData] = useState({
@@ -54,6 +56,7 @@ export default function QuestionsPage() {
     question_type_id: 0,
     position_type_id: 0,
     order: 0,
+    tags: [] as string[],
   });
 
   useEffect(() => {
@@ -191,6 +194,7 @@ export default function QuestionsPage() {
       question_type_id: defaultQuestionTypeId,
       position_type_id: defaultPositionTypeId,
       order: maxOrder + 1,
+      tags: [],
     });
     setShowAddModal(true);
   };
@@ -219,6 +223,7 @@ export default function QuestionsPage() {
       question_type_id: questionTypeId,
       position_type_id: positionTypeId,
       order: question.order,
+      tags: question.tags || [],
     });
     setShowAddModal(true);
   };
@@ -251,6 +256,7 @@ export default function QuestionsPage() {
         question_type_id: formData.question_type_id,
         position_type_id: formData.position_type_id,
         order: order,
+        tags: formData.tags,
       };
 
       if (editingQuestion) {
@@ -787,6 +793,71 @@ export default function QuestionsPage() {
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Tags / Subroles */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Tags / Subroles <span className="text-gray-400 text-xs">(optional)</span>
+                </label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {formData.tags.length === 0 && <span className="text-sm text-gray-500">No tags added</span>}
+                  {formData.tags.map((tag) => (
+                    <span
+                      key={`tag-${tag}`}
+                      className="inline-flex items-center px-2 py-1 text-xs bg-indigo-100 text-indigo-700 rounded-full"
+                    >
+                      {tag}
+                      <button
+                        type="button"
+                        className="ml-2 text-indigo-800 hover:text-indigo-900"
+                        onClick={() =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            tags: prev.tags.filter((t) => t !== tag),
+                          }))
+                        }
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="text"
+                    value={newTag}
+                    onChange={(e) => setNewTag(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        const value = newTag.trim();
+                        if (value && !formData.tags.includes(value)) {
+                          setFormData((prev) => ({ ...prev, tags: [...prev.tags, value] }));
+                          setNewTag("");
+                        }
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                    placeholder='Add tag (e.g., "network", "sysadmin", "techsupport")'
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const value = newTag.trim();
+                      if (value && !formData.tags.includes(value)) {
+                        setFormData((prev) => ({ ...prev, tags: [...prev.tags, value] }));
+                        setNewTag("");
+                      }
+                    }}
+                    className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                  >
+                    Add
+                  </button>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Tags indicate what subroles this question applies to.
+                </p>
               </div>
 
               {/* Actions */}

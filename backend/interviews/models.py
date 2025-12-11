@@ -1,7 +1,8 @@
 from django.db import models
 from django.conf import settings
-from applicants.models import Applicant
+from applicants.models import Applicant, OfficeLocation
 from .type_models import PositionType, QuestionType
+from django.utils.functional import cached_property
 
 
 class InterviewQuestion(models.Model):
@@ -14,12 +15,21 @@ class InterviewQuestion(models.Model):
         related_name='questions',
         help_text="Type of question"
     )
+    category = models.ForeignKey(
+        PositionType,
+        on_delete=models.PROTECT,
+        related_name='category_questions',
+        help_text="Job category this question belongs to",
+        null=True,
+        blank=True,
+    )
     position_type = models.ForeignKey(
         PositionType,
         on_delete=models.PROTECT,
         related_name='questions',
         help_text="Job position this question is designed for"
     )
+    tags = models.JSONField(default=list, blank=True, help_text="Subroles/tags for specialized question routing")
     max_duration = models.DurationField(null=True, blank=True, help_text="Maximum duration for answer")
     is_active = models.BooleanField(default=True)
     order = models.IntegerField(default=0, help_text="Display order of the question")
@@ -96,6 +106,12 @@ class Interview(models.Model):
         verbose_name = 'Interview'
         verbose_name_plural = 'Interviews'
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['status'], name='idx_interview_status'),
+            models.Index(fields=['created_at'], name='idx_interview_created'),
+            models.Index(fields=['applicant'], name='idx_interview_applicant'),
+            models.Index(fields=['position_type'], name='idx_interview_position'),
+        ]
     
     def __str__(self):
         return f"{self.applicant.full_name} - {self.get_interview_type_display()} ({self.status})"
@@ -124,7 +140,10 @@ class Interview(models.Model):
         
         self.save()
         return self.authenticity_status
-
+    
+    @cached_property
+    def active_questions(self):
+        return list(InterviewQuestion.objects.filter(is_active=True).order_by("order"))
 
 class VideoResponse(models.Model):
     """Model for video responses to interview questions"""
@@ -194,6 +213,11 @@ class VideoResponse(models.Model):
         verbose_name_plural = 'Video Responses'
         ordering = ['interview', 'question__order']
         unique_together = ['interview', 'question']
+        indexes = [
+            models.Index(fields=['uploaded_at'], name='idx_vr_uploaded_at'),
+            models.Index(fields=['status'], name='idx_vr_status'),
+            models.Index(fields=['interview'], name='idx_vr_interview'),
+        ]
     
     def __str__(self):
         return f"Response: {self.interview.applicant.full_name} - Q{self.question.order}"
@@ -238,3 +262,50 @@ class AIAnalysis(models.Model):
     
     def __str__(self):
         return f"Analysis: {self.video_response.interview.applicant.full_name} - Score: {self.overall_score}"
+
+
+class JobPosition(models.Model):
+    """Model for Job Positions"""
+
+    name = models.CharField(max_length=255)
+    code = models.SlugField(unique=True)
+    description = models.TextField()
+    is_active = models.BooleanField(default=True)
+    job_category = models.ForeignKey(
+        PositionType,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='job_positions'
+    )
+    category = models.ForeignKey(
+        PositionType,
+        on_delete=models.PROTECT,
+        related_name='positions',
+        null=False,
+        blank=False
+    )
+    offices = models.ManyToManyField(
+        OfficeLocation,
+        blank=True,
+        related_name='job_positions'
+    )
+    subroles = models.JSONField(default=list, blank=True, help_text="Subroles determine which specialized questions this job requires.")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_job_positions'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'job_positions'
+        verbose_name = 'Job Position'
+        verbose_name_plural = 'Job Positions'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name

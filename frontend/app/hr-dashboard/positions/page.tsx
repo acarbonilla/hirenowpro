@@ -15,6 +15,18 @@ interface Position {
   description: string;
   is_active: boolean;
   order: number;
+  employment_type?: string;
+  salary?: string;
+  key_responsibilities?: string;
+  required_skills?: string;
+  qualifications?: string;
+  category?: number | null;
+  category_detail?: { id: number; name: string };
+  subroles?: string[];
+  offices_detail?: {
+    id: number;
+    name: string;
+  }[];
 }
 
 export default function PositionsManagementPage() {
@@ -24,12 +36,14 @@ export default function PositionsManagementPage() {
   const [error, setError] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
+  const [officesOptions, setOfficesOptions] = useState<{ id: number; name: string; address?: string }[]>([]);
+  const [categoriesOptions, setCategoriesOptions] = useState<{ id: number; name: string }[]>([]);
+  const [newSubrole, setNewSubrole] = useState("");
 
   const [formData, setFormData] = useState({
     code: "",
     name: "",
     description: "",
-    address: "",
     employment_type: "Full-time",
     salary: "",
     key_responsibilities: "",
@@ -37,10 +51,15 @@ export default function PositionsManagementPage() {
     qualifications: "",
     is_active: true,
     order: 0,
+    category: null as number | null,
+    subroles: [] as string[],
+    offices: [] as number[],
   });
 
   useEffect(() => {
     fetchPositions();
+    fetchOffices();
+    fetchCategories();
   }, []);
 
   const fetchPositions = async () => {
@@ -51,7 +70,7 @@ export default function PositionsManagementPage() {
         return;
       }
 
-      const response = await axios.get(`${API_BASE_URL}/position-types/`, {
+      const response = await axios.get(`${API_BASE_URL}/positions/`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -64,12 +83,35 @@ export default function PositionsManagementPage() {
     }
   };
 
+  const fetchOffices = async () => {
+    try {
+      const token = getHRToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await axios.get(`${API_BASE_URL}/offices/`, { headers });
+      const data = response.data.results || response.data || [];
+      setOfficesOptions(data);
+    } catch (err) {
+      console.error("Error fetching offices:", err);
+    }
+  };
+
+  const fetchCategories = async () => {
+    try {
+      const token = getHRToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await axios.get(`${API_BASE_URL}/job-categories/`, { headers });
+      const data = response.data.results || response.data || [];
+      setCategoriesOptions(data);
+    } catch (err) {
+      console.error("Error fetching categories:", err);
+    }
+  };
+
   const handleAdd = () => {
     setFormData({
       code: "",
       name: "",
       description: "",
-      address: "",
       employment_type: "Full-time",
       salary: "",
       key_responsibilities: "",
@@ -77,9 +119,21 @@ export default function PositionsManagementPage() {
       qualifications: "",
       is_active: true,
       order: positions.length,
+      category: null,
+      subroles: [],
+      offices: [],
     });
     setEditingPosition(null);
     setShowAddModal(true);
+  };
+
+  const handleOfficeChange = (value: number | string | Array<number | string>) => {
+    const normalized = Array.isArray(value) ? value.map((v) => Number(v)) : [Number(value)];
+    const filtered = normalized.filter((v) => !isNaN(v) && v > 0);
+    setFormData((prev) => ({
+      ...prev,
+      offices: filtered.length ? Array.from(new Set([...(prev.offices || []), ...filtered])) : prev.offices,
+    }));
   };
 
   const handleEdit = (position: Position) => {
@@ -87,7 +141,6 @@ export default function PositionsManagementPage() {
       code: position.code,
       name: position.name,
       description: position.description,
-      address: position.address || "",
       employment_type: position.employment_type || "Full-time",
       salary: position.salary || "",
       key_responsibilities: position.key_responsibilities || "",
@@ -95,6 +148,9 @@ export default function PositionsManagementPage() {
       qualifications: position.qualifications || "",
       is_active: position.is_active,
       order: position.order,
+      category: position.category_detail?.id ?? null,
+      subroles: position.subroles || [],
+      offices: (position.offices_detail || []).map((o) => Number(o.id)),
     });
     setEditingPosition(position);
     setShowAddModal(true);
@@ -109,14 +165,21 @@ export default function PositionsManagementPage() {
         return;
       }
 
+      const payload = {
+        ...formData,
+        offices: Array.isArray(formData.offices) ? formData.offices.map((id) => Number(id)) : [],
+        category: formData.category !== null ? Number(formData.category) : null,
+        subroles: Array.isArray(formData.subroles) ? formData.subroles : [],
+      };
+
       if (editingPosition) {
         // Update existing position
-        await axios.put(`${API_BASE_URL}/position-types/${editingPosition.id}/`, formData, {
+        await axios.put(`${API_BASE_URL}/positions/${editingPosition.id}/`, payload, {
           headers: { Authorization: `Bearer ${token}` },
         });
       } else {
         // Create new position
-        await axios.post(`${API_BASE_URL}/position-types/`, formData, {
+        await axios.post(`${API_BASE_URL}/positions/`, payload, {
           headers: { Authorization: `Bearer ${token}` },
         });
       }
@@ -141,7 +204,7 @@ export default function PositionsManagementPage() {
         return;
       }
 
-      await axios.delete(`${API_BASE_URL}/position-types/${id}/`, {
+      await axios.delete(`${API_BASE_URL}/positions/${id}/`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -161,7 +224,7 @@ export default function PositionsManagementPage() {
       }
 
       await axios.patch(
-        `${API_BASE_URL}/position-types/${position.id}/`,
+        `${API_BASE_URL}/positions/${position.id}/`,
         { is_active: !position.is_active },
         {
           headers: { Authorization: `Bearer ${token}` },
@@ -219,77 +282,85 @@ export default function PositionsManagementPage() {
           </div>
         )}
 
-        {/* Positions List */}
-        <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Order
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Description
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {positions.map((position) => (
-                <tr key={position.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{position.order}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <code className="text-sm bg-gray-100 px-2 py-1 rounded">{position.code}</code>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{position.name}</td>
-                  <td className="px-6 py-4 text-sm text-gray-600 max-w-md truncate">{position.description}</td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <button
-                      onClick={() => toggleActive(position)}
-                      className={`px-3 py-1 rounded-full text-xs font-medium ${position.is_active
-                          ? "bg-green-100 text-green-800 hover:bg-green-200"
-                          : "bg-gray-100 text-gray-800 hover:bg-gray-200"
-                        }`}
-                    >
-                      {position.is_active ? "Active" : "Inactive"}
-                    </button>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <div className="flex justify-end space-x-2">
-                      <button
-                        onClick={() => handleEdit(position)}
-                        className="text-blue-600 hover:text-blue-900 p-1"
-                        title="Edit"
-                      >
-                        <Edit2 className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(position.id)}
-                        className="text-red-600 hover:text-red-900 p-1"
-                        title="Delete"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        {/* Positions Cards */}
+        {positions.length === 0 ? (
+          <div className="bg-white rounded-lg shadow-sm p-8 text-center">
+            <Briefcase className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600">No positions found. Add your first position to get started.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {positions.map((position) => (
+              <div
+                key={position.id}
+                className="relative bg-white border rounded-lg shadow-sm p-6 transition hover:shadow-md hover:scale-[1.01]"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-semibold text-gray-900">{position.name}</h3>
+                    {position.category_detail?.name && (
+                      <span className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">
+                        {position.category_detail.name}
+                      </span>
+                    )}
+                  </div>
+                  <span
+                    className={`px-3 py-1 text-xs font-semibold rounded-full ${
+                      position.is_active ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-700"
+                    }`}
+                  >
+                    {position.is_active ? "Active" : "Inactive"}
+                  </span>
+                </div>
 
-          {positions.length === 0 && (
-            <div className="text-center py-12">
-              <Briefcase className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600">No positions found. Add your first position to get started.</p>
-            </div>
-          )}
-        </div>
+                <div className="mt-3">
+                  <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-gray-100 text-gray-700 rounded">
+                    {position.code}
+                  </span>
+                </div>
+
+                <p className="mt-4 text-sm text-gray-700 leading-relaxed line-clamp-3">
+                  {position.description || "No description"}
+                </p>
+
+                <div className="mt-4 space-y-2">
+                  <p className="text-sm font-semibold text-gray-700">Offices</p>
+                  {position.offices_detail && position.offices_detail.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {position.offices_detail.map((o) => (
+                        <span
+                          key={`pos-${position.id}-office-${o.id}`}
+                          className="inline-flex items-center px-3 py-1 text-xs font-medium rounded-full bg-gray-100 text-gray-700"
+                        >
+                          {o.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-600">Offices: None</p>
+                  )}
+                </div>
+
+                <div className="mt-6 border-t pt-4 flex items-center justify-end space-x-4">
+                  <button
+                    onClick={() => handleEdit(position)}
+                    className="text-blue-600 hover:underline text-sm flex items-center space-x-1"
+                  >
+                    <Edit2 className="h-4 w-4" />
+                    <span>Edit</span>
+                  </button>
+                  <button
+                    onClick={() => handleDelete(position.id)}
+                    className="text-red-600 hover:underline text-sm flex items-center space-x-1"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    <span>Delete</span>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Add/Edit Modal */}
@@ -333,14 +404,144 @@ export default function PositionsManagementPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Address</label>
-                <input
-                  type="text"
-                  value={formData.address}
-                  onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                <label className="block text-sm font-medium text-gray-700 mb-2">Category *</label>
+                <select
+                  value={formData.category ?? ""}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      category: e.target.value ? Number(e.target.value) : null,
+                    }))
+                  }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  placeholder="e.g., Remote, New York, Manila, etc."
-                />
+                  required
+                >
+                  <option value="">Select category</option>
+                  {categoriesOptions.map((cat) => (
+                    <option key={`category-${cat.id}`} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Subroles / Tags</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {formData.subroles.length === 0 && <span className="text-sm text-gray-500">No subroles added</span>}
+                  {formData.subroles.map((tag) => (
+                    <span
+                      key={`subrole-${tag}`}
+                      className="inline-flex items-center px-2 py-1 text-xs bg-indigo-100 text-indigo-700 rounded-full"
+                    >
+                      {tag}
+                      <button
+                        type="button"
+                        className="ml-2 text-indigo-800 hover:text-indigo-900"
+                        onClick={() =>
+                          setFormData((prev) => ({
+                            ...prev,
+                            subroles: prev.subroles.filter((t) => t !== tag),
+                          }))
+                        }
+                      >
+                        ×
+                      </button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex items-center space-x-3">
+                  <input
+                    type="text"
+                    value={newSubrole}
+                    onChange={(e) => setNewSubrole(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        const value = newSubrole.trim();
+                        if (value && !formData.subroles.includes(value)) {
+                          setFormData((prev) => ({ ...prev, subroles: [...prev.subroles, value] }));
+                          setNewSubrole("");
+                        }
+                      }
+                    }}
+                    list="subrole-options"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder='Add subrole (e.g., "network", "sysadmin", "techsupport")'
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const value = newSubrole.trim();
+                      if (value && !formData.subroles.includes(value)) {
+                        setFormData((prev) => ({ ...prev, subroles: [...prev.subroles, value] }));
+                        setNewSubrole("");
+                      }
+                    }}
+                    className="px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
+                  >
+                    Add
+                  </button>
+                  <datalist id="subrole-options">
+                    <option value="network" />
+                    <option value="sysadmin" />
+                    <option value="techsupport" />
+                    <option value="databases" />
+                    <option value="cloud" />
+                  </datalist>
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  Subroles determine which specialized questions this job requires.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Office Locations</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {formData.offices.length === 0 && (
+                    <span className="text-sm text-gray-500">No offices selected</span>
+                  )}
+                  {formData.offices.map((officeId) => {
+                    const office = officesOptions.find((o) => o.id === officeId);
+                    if (!office) return null;
+                    return (
+                      <span
+                        key={`office-pill-${officeId}`}
+                        className="inline-flex items-center px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded-full"
+                      >
+                        {office.name}
+                        <button
+                          type="button"
+                          className="ml-2 text-purple-800 hover:text-purple-900"
+                          onClick={() =>
+                            setFormData((prev) => ({
+                              ...prev,
+                              offices: prev.offices.filter((id) => id !== officeId),
+                            }))
+                          }
+                        >
+                          ×
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+                <select
+                  value=""
+                  onChange={(e) => handleOfficeChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                >
+                  <option value="">Select office</option>
+                  {(!officesOptions || officesOptions.length === 0)
+                    ? null
+                    : officesOptions
+                        .filter((o) => !formData.offices.includes(o.id))
+                        .map((office) => (
+                          <option key={`office-option-${office.id}`} value={office.id}>
+                            {office.name}
+                          </option>
+                        ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-4">

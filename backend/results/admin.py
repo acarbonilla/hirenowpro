@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import InterviewResult, ReapplicationTracking
+from .models import InterviewResult, ReapplicationTracking, SystemSettings
 
 
 @admin.register(InterviewResult)
@@ -23,3 +23,36 @@ class ReapplicationTrackingAdmin(admin.ModelAdmin):
         return obj.is_eligible_to_reapply
     is_eligible_to_reapply.boolean = True
     is_eligible_to_reapply.short_description = 'Eligible to Reapply'
+
+
+@admin.register(SystemSettings)
+class SystemSettingsAdmin(admin.ModelAdmin):
+    fieldsets = [
+        ('Scoring Thresholds', {
+            'fields': ['passing_score_threshold', 'review_score_threshold'],
+            'description': 'Configure score thresholds for automatic recommendations'
+        }),
+        ('Application Settings', {
+            'fields': ['max_concurrent_interviews', 'interview_expiry_days'],
+        }),
+        ('AI Features', {
+            'fields': ['enable_script_detection', 'enable_sentiment_analysis'],
+        }),
+        ('Metadata', {
+            'fields': ['last_modified', 'modified_by'],
+            'classes': ['collapse'],
+        }),
+    ]
+    readonly_fields = ['last_modified']
+    
+    def has_add_permission(self, request):
+        # Only allow one instance
+        return not SystemSettings.objects.exists()
+    
+    def has_delete_permission(self, request, obj=None):
+        # Don't allow deleting settings
+        return False
+    
+    def save_model(self, request, obj, form, change):
+        obj.modified_by = request.user.get_full_name() or request.user.username
+        super().save_model(request, obj, form, change)

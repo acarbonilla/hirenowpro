@@ -3,39 +3,45 @@
 import { useRouter } from "next/navigation";
 import { useState, useEffect } from "react";
 import axios from "axios";
+import { Briefcase, MapPin, ArrowRight } from "lucide-react";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
-interface Position {
+interface JobPosition {
   id: number;
-  code: string;
   name: string;
+  code: string;
   description: string;
   is_active: boolean;
-  order: number;
+  category_detail?: {
+    id: number;
+    name: string;
+  };
+  offices_detail?: {
+    id: number;
+    name: string;
+  }[];
 }
 
 // Icon mapping based on position code
 const getPositionIcon = (code: string): string => {
   const iconMap: { [key: string]: string } = {
-    "virtual-assistant": "💼",
-    VA: "💼",
-    "customer-service": "📞",
-    CS: "📞",
-    "data-entry": "⌨️",
-    DE: "⌨️",
-    "social-media": "📱",
-    IT: "💻",
+    "virtual-assistant": "✦",
+    VA: "✦",
+    "customer-service": "☎",
+    CS: "☎",
+    "data-entry": "⌨",
+    DE: "⌨",
+    "social-media": "☀",
+    IT: "⌘",
   };
-  return iconMap[code] || "💼";
+  return iconMap[code] || "✦";
 };
 
 export default function OpenPositionsPage() {
   const router = useRouter();
-  const [positions, setPositions] = useState<Position[]>([]);
+  const [positions, setPositions] = useState<JobPosition[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
-  const [showModal, setShowModal] = useState(false);
 
   useEffect(() => {
     fetchPositions();
@@ -43,11 +49,9 @@ export default function OpenPositionsPage() {
 
   const fetchPositions = async () => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/position-types/`);
+      const response = await axios.get(`${API_BASE_URL}/positions/`);
       const data = response.data.results || response.data;
-      // Only show active positions
-      const activePositions = data.filter((p: Position) => p.is_active);
-      setPositions(activePositions);
+      setPositions(data);
       setLoading(false);
     } catch (error) {
       console.error("Error fetching positions:", error);
@@ -55,22 +59,14 @@ export default function OpenPositionsPage() {
     }
   };
 
-  const handleApply = (positionCode: string) => {
-    setSelectedPosition(positionCode);
-    setShowModal(true);
-  };
-
-  const handleNewApplication = () => {
-    if (selectedPosition) {
-      localStorage.setItem("selectedPosition", selectedPosition);
-      router.push(`/register?position=${selectedPosition}`);
-    }
-  };
-
-  const handleReturningUser = () => {
-    if (selectedPosition) {
-      localStorage.setItem("selectedPosition", selectedPosition);
-      router.push(`/login?position=${selectedPosition}`);
+  const handleApply = (position: JobPosition) => {
+    const offices = position.offices_detail || [];
+    if (offices.length === 0) {
+      router.push(`/register?position=${position.code}&office=null`);
+    } else if (offices.length === 1) {
+      router.push(`/register?position=${position.code}&office=${offices[0].id}`);
+    } else {
+      router.push(`/select-office?position=${position.code}`);
     }
   };
 
@@ -124,21 +120,19 @@ export default function OpenPositionsPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <h1 className="text-4xl md:text-5xl font-bold mb-4">Join Our Team</h1>
           <p className="text-xl text-purple-100 max-w-3xl mx-auto">
-            We're hiring talented professionals for remote positions. Apply now and start your journey with us!
+            We're hiring talented professionals. Apply now and start your journey with us!
           </p>
         </div>
       </div>
 
       {/* Positions Grid */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="mb-8">
+      <div className="max-w-6xl mx-auto px-4 md:px-6 lg:px-8 py-10 space-y-8">
+        <div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Available Positions</h2>
-          <p className="text-gray-600">
-            {positions.length} open positions • Click "Apply Now" to start your application
-          </p>
+          <p className="text-gray-600">{positions.length} open positions • Click "Apply Now" to start your application</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 lg:gap-8">
           {positions.length === 0 ? (
             <div className="col-span-2 text-center py-12">
               <p className="text-gray-600">No positions available at the moment. Please check back later.</p>
@@ -147,37 +141,67 @@ export default function OpenPositionsPage() {
             positions.map((position) => (
               <div
                 key={position.id}
-                className="bg-white rounded-xl shadow-md border-2 border-gray-200 hover:border-purple-400 transition-all duration-200 overflow-hidden"
+                className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-all duration-200 overflow-hidden"
               >
-                <div className="p-6">
-                  <div className="flex items-start justify-between mb-4">
+                <div className="p-6 space-y-4">
+                  <div className="flex items-start justify-between">
                     <div className="flex items-center space-x-3">
                       <div className="text-4xl">{getPositionIcon(position.code)}</div>
                       <div>
-                        <h3 className="text-xl font-bold text-gray-900">{position.name}</h3>
-                        <div className="flex items-center space-x-3 mt-1">
-                          <span className="px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded">
+                        <h3 className="text-lg font-semibold text-gray-900">{position.name}</h3>
+                        {position.category_detail?.name && (
+                          <div className="mt-1">
+                            <span className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">
+                              {position.category_detail.name}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex items-center space-x-3 mt-1 text-sm text-gray-600">
+                          <span className="inline-flex items-center px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">
+                            <Briefcase className="w-3 h-3 mr-1" />
                             Full-time
                           </span>
-                          <span className="text-sm text-gray-500">📍 Remote</span>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  <p className="text-gray-700 mb-4">{position.description || "Join our team!"}</p>
+                  <p className="text-sm text-gray-600 leading-relaxed line-clamp-5 md:line-clamp-none">
+                    {position.description || "Join our team!"}
+                  </p>
 
-                  <div className="mb-4">
-                    <p className="text-sm text-gray-600">
-                      Click "Apply Now" to start your application process for this position.
-                    </p>
+                  <div className="space-y-2">
+                    {position.offices_detail && position.offices_detail.length > 0 ? (
+                      <div>
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Available Locations</p>
+                        <div className="flex flex-wrap gap-2 mt-1">
+                          {position.offices_detail.map((office) => (
+                            <span
+                              key={office.id}
+                              className="inline-flex items-center px-3 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded-full"
+                            >
+                              <MapPin className="w-3 h-3 mr-1" />
+                              {office.name}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Available Locations</p>
+                        <span className="inline-flex items-center px-3 py-1 text-xs font-medium bg-gray-100 text-gray-600 rounded-full">
+                          Remote Only
+                        </span>
+                      </div>
+                    )}
                   </div>
 
                   <button
-                    onClick={() => handleApply(position.code)}
-                    className="w-full bg-purple-600 text-white py-3 rounded-lg hover:bg-purple-700 transition-colors font-semibold"
+                    onClick={() => handleApply(position)}
+                    className="w-full md:w-auto px-6 py-2 rounded-lg bg-purple-600 text-white font-medium hover:bg-purple-700 transition inline-flex items-center justify-center space-x-2"
                   >
-                    Apply Now →
+                    <span>Apply Now</span>
+                    <ArrowRight className="w-4 h-4" />
                   </button>
                 </div>
               </div>
@@ -192,9 +216,9 @@ export default function OpenPositionsPage() {
           <h2 className="text-2xl font-bold text-gray-900 text-center mb-8">Why Work With Us?</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="text-center p-6">
-              <div className="text-4xl mb-3">🏠</div>
-              <h3 className="font-bold text-gray-900 mb-2">100% Remote</h3>
-              <p className="text-gray-600">Work from anywhere in the world</p>
+              <div className="text-4xl mb-3">☁</div>
+              <h3 className="font-bold text-gray-900 mb-2">Flexible</h3>
+              <p className="text-gray-600">Work where you thrive</p>
             </div>
             <div className="text-center p-6">
               <div className="text-4xl mb-3">⚡</div>
@@ -202,70 +226,13 @@ export default function OpenPositionsPage() {
               <p className="text-gray-600">Quick AI-powered interview process</p>
             </div>
             <div className="text-center p-6">
-              <div className="text-4xl mb-3">💰</div>
+              <div className="text-4xl mb-3">💼</div>
               <h3 className="font-bold text-gray-900 mb-2">Competitive Pay</h3>
               <p className="text-gray-600">Fair compensation for your skills</p>
             </div>
           </div>
         </div>
       </div>
-
-      {/* Application Modal */}
-      {showModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-8 relative">
-            <button
-              onClick={() => setShowModal(false)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600"
-            >
-              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-
-            <div className="text-center mb-6">
-              <h2 className="text-2xl font-bold text-gray-900 mb-2">Ready to Apply?</h2>
-              <p className="text-gray-600">Choose how you'd like to proceed</p>
-            </div>
-
-            <div className="space-y-4">
-              <button
-                onClick={handleNewApplication}
-                className="w-full py-4 px-6 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition-colors duration-200 flex items-center justify-center space-x-2"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"
-                  />
-                </svg>
-                <span>New Application</span>
-              </button>
-
-              <button
-                onClick={handleReturningUser}
-                className="w-full py-4 px-6 bg-gray-100 hover:bg-gray-200 text-gray-800 font-semibold rounded-lg transition-colors duration-200 flex items-center justify-center space-x-2"
-              >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1"
-                  />
-                </svg>
-                <span>Returning User Sign In</span>
-              </button>
-            </div>
-
-            <p className="text-sm text-gray-500 text-center mt-6">
-              By continuing, you'll be directed to complete your application for the selected position.
-            </p>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

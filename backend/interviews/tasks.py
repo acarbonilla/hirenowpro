@@ -59,34 +59,50 @@ def process_complete_interview(self, interview_id):
         video_responses = list(interview.video_responses.all())
         logger.info(f"Found {len(video_responses)} video responses to process")
         
-        # Prepare data for batch processing
-        videos_data = [
+        # Check if transcripts are already available (from upload step)
+        from interviews.deepgram_service import get_deepgram_service
+        
+        videos_needing_transcription = [vr for vr in video_responses if not vr.transcript]
+        
+        # Transcribe any videos that don't have transcripts yet (fallback)
+        if videos_needing_transcription:
+            logger.warning(f"Found {len(videos_needing_transcription)} videos without transcripts, transcribing now...")
+            deepgram_service = get_deepgram_service()
+            for vr in videos_needing_transcription:
+                try:
+                    transcript_data = deepgram_service.transcribe_video(
+                        vr.video_file_path.path,
+                        video_response_id=vr.id
+                    )
+                    vr.transcript = transcript_data['transcript']
+                    vr.save()
+                    logger.info(f"Transcribed video {vr.id}")
+                except Exception as trans_error:
+                    logger.error(f"Failed to transcribe video {vr.id}: {trans_error}")
+                    vr.transcript = ""
+                    vr.save()
+        
+        # Prepare data for BATCH LLM ANALYSIS (transcripts already stored)
+        transcripts_data = [
             {
                 'video_id': vr.id,
-                'video_file_path': vr.video_file_path.path,
+                'transcript': vr.transcript,
                 'question_text': vr.question.question_text,
                 'question_type': vr.question.question_type.name if vr.question.question_type else 'general'
             }
             for vr in video_responses
         ]
         
-        # Process all videos in parallel with token tracking
+        # Analyze all transcripts in ONE API call
+        logger.info(f"Running batch LLM analysis for {len(transcripts_data)} transcripts...")
         ai_service = get_ai_service()
-        results = ai_service.batch_transcribe_and_analyze(videos_data, interview_id=interview.id)
+        analyses = ai_service.batch_analyze_transcripts(transcripts_data, interview_id=interview.id)
         
-        # Map results back to video responses
-        results_map = {r['video_id']: r for r in results}
-        
-        # Save results to database
-        for video_response in video_responses:
-            result = results_map.get(video_response.id)
-            
-            if result and result['success']:
-                transcript = result['transcript']
-                analysis_result = result['analysis']
-                
-                # Check if this is a technical issue (no audio)
-                is_technical_issue = analysis_result.get('technical_issue', False)
+        # Save LLM analysis results to database
+        for video_response, analysis_result in zip(video_responses, analyses):
+            try:
+                # Check if transcript is empty (technical issue)
+                is_technical_issue = not video_response.transcript or len(video_response.transcript.strip()) == 0
                 
                 # Detect script reading
                 try:
@@ -98,7 +114,6 @@ def process_complete_interview(self, interview_id):
                 with transaction.atomic():
                     if is_technical_issue:
                         # For technical issues, don't create AI analysis, just flag the video
-                        video_response.transcript = transcript
                         video_response.ai_score = None
                         video_response.sentiment = None
                         video_response.script_reading_status = script_detection['status']
@@ -106,12 +121,12 @@ def process_complete_interview(self, interview_id):
                         video_response.processed = True
                         video_response.status = 'analyzed'
                         video_response.save()
-                        logger.warning(f"Video {video_response.id} flagged as technical issue")
+                        logger.warning(f"Video {video_response.id} has no transcript (technical issue)")
                     else:
                         # Save AI analysis
                         AIAnalysis.objects.create(
                             video_response=video_response,
-                            transcript_text=transcript,
+                            transcript_text=video_response.transcript,  # Already stored from upload
                             sentiment_score=analysis_result.get('sentiment_score', 50.0),
                             confidence_score=analysis_result.get('confidence_score', 50.0),
                             speech_clarity_score=analysis_result.get('speech_clarity_score', 50.0),
@@ -125,8 +140,7 @@ def process_complete_interview(self, interview_id):
                             }
                         )
                         
-                        # Update video_response
-                        video_response.transcript = transcript
+                        # Update video_response with scores
                         video_response.ai_score = analysis_result.get('overall_score', 50.0)
                         video_response.sentiment = analysis_result.get('sentiment_score', 50.0)
                         video_response.script_reading_status = script_detection['status']
@@ -134,10 +148,9 @@ def process_complete_interview(self, interview_id):
                         video_response.processed = True
                         video_response.status = 'analyzed'
                         video_response.save()
-                        logger.info(f"Saved results for video {video_response.id}")
-            else:
-                error_msg = result.get('error', 'Unknown error') if result else 'Result not found'
-                logger.error(f"Failed to process video {video_response.id}: {error_msg}")
+                        logger.info(f"Saved LLM analysis for video {video_response.id}")
+            except Exception as save_error:
+                logger.error(f"Failed to save analysis for video {video_response.id}: {save_error}")
                 video_response.status = 'failed'
                 video_response.save()
         

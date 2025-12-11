@@ -158,7 +158,7 @@ def reprocess_interview_with_rate_limiting(interview_id):
         avg_score = interview.video_responses.filter(ai_score__isnull=False).aggregate(avg=Avg('ai_score'))['avg']
         
         if avg_score is not None:
-            passed = avg_score >= 75.0
+            passed = avg_score >= 70.0
             result, created = InterviewResult.objects.get_or_create(
                 interview=interview,
                 defaults={
@@ -179,7 +179,7 @@ def reprocess_interview_with_rate_limiting(interview_id):
             applicant = interview.applicant
             if avg_score < 50:
                 applicant.status = 'failed'
-            elif avg_score >= 75:
+            elif avg_score >= 70:
                 applicant.status = 'passed'
             else:
                 applicant.status = 'in_review'

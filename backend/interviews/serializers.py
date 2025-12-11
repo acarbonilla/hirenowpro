@@ -1,14 +1,54 @@
 from rest_framework import serializers
-from .models import Interview, InterviewQuestion, VideoResponse, AIAnalysis
-from .type_serializers import PositionTypeSerializer, QuestionTypeSerializer
+from .models import Interview, InterviewQuestion, VideoResponse, AIAnalysis, JobPosition
+from .type_models import PositionType
+from .type_serializers import JobCategorySerializer, QuestionTypeSerializer
 from applicants.serializers import ApplicantListSerializer
+from applicants.models import OfficeLocation
+from django.db.models import Q
+
+
+class OfficeMiniSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = OfficeLocation
+        fields = ("id", "name")
+
+
+class JobPositionSerializer(serializers.ModelSerializer):
+    offices_detail = OfficeMiniSerializer(source="offices", many=True, read_only=True)
+    offices = serializers.PrimaryKeyRelatedField(many=True, queryset=OfficeLocation.objects.all())
+    category = serializers.PrimaryKeyRelatedField(queryset=PositionType.objects.all())
+    category_detail = JobCategorySerializer(source="category", read_only=True)
+    subroles = serializers.ListField(child=serializers.CharField(), required=False, allow_empty=True)
+    created_by = serializers.ReadOnlyField(source='created_by.username')
+
+    class Meta:
+        model = JobPosition
+        fields = [
+            "id",
+            "name",
+            "code",
+            "description",
+            "is_active",
+            "job_category",
+            "category",
+            "category_detail",
+            "subroles",
+            "offices",
+            "offices_detail",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'created_by']
 
 
 class InterviewQuestionSerializer(serializers.ModelSerializer):
     """Serializer for interview questions"""
     
     question_type_detail = QuestionTypeSerializer(source='question_type', read_only=True)
-    position_type_detail = PositionTypeSerializer(source='position_type', read_only=True)
+    job_category_detail = JobCategorySerializer(source='position_type', read_only=True)
+    category_detail = JobCategorySerializer(source='category', read_only=True)
+    tags = serializers.ListField(child=serializers.CharField(), required=False, allow_empty=True)
     question_type_id = serializers.PrimaryKeyRelatedField(
         source='question_type',
         queryset=serializers.SerializerMethodField(),
@@ -25,8 +65,8 @@ class InterviewQuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = InterviewQuestion
         fields = [
-            'id', 'question_text', 'question_type', 'position_type',
-            'question_type_detail', 'position_type_detail',
+            'id', 'question_text', 'question_type', 'position_type', 'category', 'tags',
+            'question_type_detail', 'job_category_detail', 'category_detail',
             'question_type_id', 'position_type_id', 'order'
         ]
     
@@ -133,6 +173,7 @@ class InterviewSerializer(serializers.ModelSerializer):
     applicant = ApplicantListSerializer(read_only=True)
     video_responses = VideoResponseSerializer(many=True, read_only=True)
     questions = serializers.SerializerMethodField()
+    category_detail = JobCategorySerializer(source="position_type", read_only=True)
     position_type = serializers.SerializerMethodField()
     
     class Meta:
@@ -142,6 +183,7 @@ class InterviewSerializer(serializers.ModelSerializer):
             'applicant',
             'interview_type',
             'position_type',
+            'category_detail',
             'status',
             'created_at',
             'submission_date',
@@ -170,7 +212,19 @@ class InterviewSerializer(serializers.ModelSerializer):
     
     def get_questions(self, obj):
         """Get active questions for the interview"""
-        questions = InterviewQuestion.objects.filter(is_active=True).order_by('order')
+        qs = InterviewQuestion.objects.filter(is_active=True).order_by('order')
+        if obj.position_type_id:
+            qs = qs.filter(category_id=obj.position_type_id)
+        subroles = getattr(obj, "_job_position_subroles", None)
+        if subroles:
+            q = Q()
+            for tag in subroles:
+                q |= Q(tags__contains=[tag])
+            if q:
+                refined = qs.filter(q)
+                if refined.exists():
+                    qs = refined
+        questions = qs
         return InterviewQuestionSerializer(questions, many=True).data
 
 
@@ -179,10 +233,11 @@ class InterviewCreateSerializer(serializers.ModelSerializer):
     
     applicant_id = serializers.IntegerField(write_only=True)
     position_type = serializers.CharField(required=False, allow_null=True)
+    job_position_id = serializers.IntegerField(required=False, allow_null=True)
     
     class Meta:
         model = Interview
-        fields = ['applicant_id', 'interview_type', 'position_type']
+        fields = ['applicant_id', 'interview_type', 'position_type', 'job_position_id']
     
     def validate_applicant_id(self, value):
         """Validate that applicant exists"""
@@ -213,16 +268,31 @@ class InterviewCreateSerializer(serializers.ModelSerializer):
         except PositionType.DoesNotExist:
             raise serializers.ValidationError(f"Position type '{value}' not found.")
     
+    def validate_job_position_id(self, value):
+        if value is None:
+            return value
+        from .models import JobPosition
+        try:
+            return JobPosition.objects.get(id=value)
+        except JobPosition.DoesNotExist:
+            raise serializers.ValidationError(f"Job position with ID {value} not found.")
+    
     def create(self, validated_data):
         """Create interview with pending status"""
         from applicants.models import Applicant
         applicant_id = validated_data.pop('applicant_id')
         applicant = Applicant.objects.get(id=applicant_id)
+        job_position = validated_data.pop("job_position_id", None)
+        if job_position and job_position.category:
+            validated_data["position_type"] = job_position.category
         
         validated_data['applicant'] = applicant
         validated_data['status'] = 'pending'
         
         interview = super().create(validated_data)
+        if job_position:
+            setattr(interview, "_job_position", job_position)
+            setattr(interview, "_job_position_subroles", job_position.subroles or [])
         
         # Update applicant status
         applicant.status = 'in_review'
@@ -357,3 +427,24 @@ class ProcessingStatusResponseSerializer(serializers.Serializer):
     progress = ProcessingProgressSerializer()
     estimated_time_remaining = serializers.CharField()
     message = serializers.CharField(required=False)
+
+
+class InterviewListSerializer(serializers.ModelSerializer):
+    applicant_name = serializers.CharField(source="applicant.full_name", read_only=True)
+    position = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Interview
+        fields = [
+            "id",
+            "status",
+            "created_at",
+            "position_type",
+            "applicant_name",
+            "position",
+        ]
+
+    def get_position(self, obj):
+        return obj.position_type.code if obj.position_type else None
+    
+    

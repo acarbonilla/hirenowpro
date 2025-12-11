@@ -23,6 +23,7 @@ export interface Applicant {
   latitude?: number;
   longitude?: number;
   distance_from_office?: number;
+  geo_status?: "onsite" | "offsite" | "unknown";
   created_at: string;
   updated_at: string;
 }

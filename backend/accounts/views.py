@@ -16,6 +16,7 @@ from .serializers import (
     RegisterSerializer,
     ChangePasswordSerializer
 )
+from .permissions import IsHR, IsApplicant, IsAdmin, IsSuperAdmin
 
 
 class LoginView(generics.GenericAPIView):
@@ -26,22 +27,32 @@ class LoginView(generics.GenericAPIView):
     serializer_class = LoginSerializer
     permission_classes = [AllowAny]
     
+    allowed_roles = None  # allow any authenticated user by default
+    
     def post(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         
         user = serializer.validated_data['user']
+
+        # Role gate if configured
+        normalized_role = getattr(user, "normalized_role", getattr(user, "role", None))
+        if self.allowed_roles is not None and normalized_role not in self.allowed_roles:
+            return Response({"detail": "Access denied for this role."}, status=status.HTTP_403_FORBIDDEN)
         
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
+        # Embed useful claims for frontend/permissions
+        refresh["role"] = normalized_role
+        refresh["is_staff"] = user.is_staff
+        refresh["is_superuser"] = user.is_superuser
+        refresh["email"] = user.email
+        refresh["username"] = user.username
         
         return Response({
-            'message': 'Login successful',
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
             'user': UserSerializer(user).data,
-            'tokens': {
-                'access': str(refresh.access_token),
-                'refresh': str(refresh)
-            }
         }, status=status.HTTP_200_OK)
 
 
@@ -88,14 +99,14 @@ class RegisterView(generics.CreateAPIView):
         
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
+        refresh["role"] = getattr(user, "normalized_role", getattr(user, "role", None))
+        refresh["is_staff"] = user.is_staff
+        refresh["is_superuser"] = user.is_superuser
         
         return Response({
-            'message': 'Registration successful',
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
             'user': UserSerializer(user).data,
-            'tokens': {
-                'access': str(refresh.access_token),
-                'refresh': str(refresh)
-            }
         }, status=status.HTTP_201_CREATED)
 
 
@@ -139,6 +150,7 @@ def check_auth(request):
     """
     user = request.user
     groups = list(user.groups.values_list('name', flat=True))
+    role = getattr(user, "normalized_role", getattr(user, "role", None))
     
     return Response({
         'authenticated': True,
@@ -150,5 +162,6 @@ def check_auth(request):
             'is_it_support': 'IT Support' in groups,
             'is_staff': user.is_staff,
             'is_superuser': user.is_superuser,
+            'role': role,
         }
     }, status=status.HTTP_200_OK)

@@ -26,12 +26,17 @@ api.interceptors.request.use(
       "/analysis/",
     ];
 
-    const isPublic = config.url && publicEndpoints.some(endpoint => config.url!.includes(endpoint));
+    const isPublic = config.url && publicEndpoints.some((endpoint) => config.url!.includes(endpoint));
 
-    // Add auth token if available (check both regular and HR tokens)
-    // Only add token if it's NOT a public endpoint
+    // Add auth token if available (prefer HR token for authenticated areas)
     if (typeof window !== "undefined" && !isPublic) {
-      const token = localStorage.getItem("authToken") || localStorage.getItem("hr_authToken");
+      // Clean legacy keys to avoid conflicts
+      localStorage.removeItem("access_token");
+      localStorage.removeItem("refreshToken");
+      localStorage.removeItem("refresh_token");
+
+      const hrToken = localStorage.getItem("hr_access");
+      const token = hrToken || localStorage.getItem("applicant_access") || localStorage.getItem("authToken");
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -71,9 +76,14 @@ export const applicantAPI = {
     email: string;
     phone: string;
     application_source?: string;
-    latitude?: number;
-    longitude?: number;
+    latitude?: number | null;
+    longitude?: number | null;
+    applicant_lat?: number | null;
+    applicant_lng?: number | null;
   }) => api.post("/applicants/", data),
+
+  // Get applicant by ID
+  getApplicant: (id: number) => api.get(`/applicants/${id}/`),
 };
 
 export const interviewAPI = {
@@ -81,14 +91,15 @@ export const interviewAPI = {
   createInterview: (data: { applicant_id: number; interview_type: string; position_type?: string }) =>
     api.post("/interviews/", data),
 
+  // Alias for createInterview
+  create: (data: { applicant_id: number; interview_type?: string; position_type?: string }) =>
+    api.post("/interviews/", { ...data, interview_type: data.interview_type || "initial_ai" }),
+
   // Get interview details
   getInterview: (id: number) => api.get(`/interviews/${id}/`),
 
   // Upload video response (no immediate analysis)
-  uploadVideoResponse: (
-    interviewId: number,
-    formData: FormData
-  ) => {
+  uploadVideoResponse: (interviewId: number, formData: FormData) => {
     return api.post(`/interviews/${interviewId}/video-response/`, formData, {
       headers: {
         "Content-Type": "multipart/form-data",
@@ -114,29 +125,25 @@ export const trainingAPI = {
   getModules: () => api.get("/training/modules/"),
 
   // Create a new training session
-  createSession: (data: { applicant_id: number; module_id: number }) =>
-    api.post("/training/sessions/", data),
+  createSession: (data: { applicant_id: number; module_id: number }) => api.post("/training/sessions/", data),
 
   // Get session details
   getSession: (id: number) => api.get(`/training/sessions/${id}/`),
 
   // Submit a practice response
-  submitResponse: (
-    sessionId: number,
-    data: { question_text: string; video: Blob }
-  ) => {
+  submitResponse: (sessionId: number, data: { question_text: string; video: Blob }) => {
     const formData = new FormData();
     formData.append("question_text", data.question_text);
 
     // Determine file extension from blob type
     const blobType = data.video.type;
-    let extension = 'webm'; // default
-    if (blobType.includes('mp4')) {
-      extension = 'mp4';
-    } else if (blobType.includes('webm')) {
-      extension = 'webm';
-    } else if (blobType.includes('mov') || blobType.includes('quicktime')) {
-      extension = 'mov';
+    let extension = "webm"; // default
+    if (blobType.includes("mp4")) {
+      extension = "mp4";
+    } else if (blobType.includes("webm")) {
+      extension = "webm";
+    } else if (blobType.includes("mov") || blobType.includes("quicktime")) {
+      extension = "mov";
     }
 
     formData.append("video", data.video, `practice_response.${extension}`);
@@ -160,6 +167,8 @@ export const questionAPI = {
 export const authAPI = {
   // Login
   login: (data: { username: string; password: string }) => api.post("/auth/login/", data),
+  hrLogin: (data: { username: string; password: string }) => api.post("/auth/hr-login/", data),
+  applicantLogin: (data: { username: string; password: string }) => api.post("/auth/applicant-login/", data),
 
   // Logout
   logout: (refreshToken: string) => api.post("/auth/logout/", { refresh_token: refreshToken }),
@@ -191,6 +200,21 @@ export const authAPI = {
   // Change password
   changePassword: (data: { old_password: string; new_password: string; new_password_confirm: string }) =>
     api.patch("/auth/change-password/", data),
+};
+
+export const settingsAPI = {
+  // Get system settings
+  getSettings: () => api.get("/settings/"),
+
+  // Update system settings (HR/Admin only)
+  updateSettings: (data: {
+    passing_score_threshold?: number;
+    review_score_threshold?: number;
+    max_concurrent_interviews?: number;
+    interview_expiry_days?: number;
+    enable_script_detection?: boolean;
+    enable_sentiment_analysis?: boolean;
+  }) => api.put("/settings/1/", data),
 };
 
 export default api;

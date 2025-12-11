@@ -62,24 +62,38 @@ export default function ApplicantsPage() {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      // Fetch applicants and results in parallel
-      const [applicantsRes, resultsRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/applicants/`, { headers }),
-        axios.get(`${API_BASE_URL}/results/`, { headers }),
+      // Fetch applicants and results in parallel but tolerate partial failures
+      const [applicantsRes, resultsRes] = await Promise.allSettled([
+        axios.get(`${API_BASE_URL}/applicants/`, { headers, timeout: 15000 }),
+        axios.get(`${API_BASE_URL}/results/`, { headers, timeout: 15000 }),
       ]);
 
-      const fetchedApplicants = applicantsRes.data.results || applicantsRes.data || [];
-      const fetchedResults = resultsRes.data.results || resultsRes.data || [];
+      if (applicantsRes.status === "fulfilled") {
+        const data = applicantsRes.value.data;
+        const fetchedApplicants = data.results || data || [];
+        setApplicants(Array.isArray(fetchedApplicants) ? fetchedApplicants : []);
+      } else {
+        console.warn("Applicants request failed:", applicantsRes.reason);
+      }
 
-      setApplicants(fetchedApplicants);
-      setResults(fetchedResults);
+      if (resultsRes.status === "fulfilled") {
+        const data = resultsRes.value.data;
+        const fetchedResults = data.results || data || [];
+        setResults(Array.isArray(fetchedResults) ? fetchedResults : []);
+      } else {
+        console.warn("Results request failed:", resultsRes.reason);
+      }
     } catch (error: any) {
-      console.error("Error fetching data:", error);
+      console.error("Error fetching applicants/results:", error);
       if (error.response?.status === 401) {
         setError("Authentication required. Redirecting to login...");
         setTimeout(() => {
           router.push("/hr-login");
         }, 1500);
+      } else if (error.response?.status === 403) {
+        setError("Access denied. Please contact an HR Manager for permissions.");
+      } else if (error.code === "ECONNABORTED") {
+        setError("Request timed out. You can retry.");
       } else {
         setError(error.response?.data?.detail || "Failed to load applicants");
       }
@@ -87,6 +101,30 @@ export default function ApplicantsPage() {
       setLoading(false);
     }
   };
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
+          <div className="flex items-center space-x-3 mb-3">
+            <span className="text-2xl">⚠️</span>
+            <h3 className="text-lg font-semibold text-red-900">Error Loading Applicants</h3>
+          </div>
+          <p className="text-red-700 mb-4">{error}</p>
+          <button
+            onClick={() => {
+              setError("");
+              setLoading(true);
+              fetchData();
+            }}
+            className="w-full bg-purple-600 text-white py-2 px-4 rounded-lg hover:bg-purple-700 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const handleUpdateStatus = async () => {
     if (!editingApplicant || !newStatus) return;

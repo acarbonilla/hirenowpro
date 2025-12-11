@@ -1,5 +1,7 @@
 from django.db import models
 
+from applicants.models import OfficeLocation
+
 
 class PositionType(models.Model):
     """Model for managing position types"""
@@ -53,13 +55,19 @@ class PositionType(models.Model):
         default=0,
         help_text="Display order in dropdowns"
     )
+    offices = models.ManyToManyField(
+        OfficeLocation,
+        blank=True,
+        related_name='position_types',
+        help_text="Offices where this position is available"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
     class Meta:
         db_table = 'position_types'
-        verbose_name = 'Position Type'
-        verbose_name_plural = 'Position Types'
+        verbose_name = 'Job Category'
+        verbose_name_plural = 'Job Categories'
         ordering = ['order', 'name']
     
     def __str__(self):

@@ -20,10 +20,22 @@ export default function HRLoginPage() {
     setLoading(true);
 
     try {
-      const response = await authAPI.login(formData);
-      const { tokens, user } = response.data;
+      const response = await authAPI.hrLogin(formData);
+      const tokens = response.data.tokens || { access: response.data.access, refresh: response.data.refresh };
+      const user = response.data.user || response.data?.user_data || response.data?.profile;
 
-      // Store authentication first
+      // Store authentication first with cleanup of legacy keys
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("access_token");
+        localStorage.removeItem("authToken");
+        localStorage.removeItem("employee");
+        localStorage.removeItem("hr_access");
+        localStorage.removeItem("hr_refresh");
+        localStorage.removeItem("refreshToken");
+        localStorage.removeItem("refresh_token");
+        localStorage.removeItem("applicant_access");
+        localStorage.removeItem("applicant_refresh");
+      }
       setHRAuth(tokens, user);
 
       // Check user permissions
@@ -37,8 +49,9 @@ export default function HRLoginPage() {
         return;
       }
 
-      // Redirect to HR dashboard
+      // Redirect to HR dashboard with router refresh to force reload
       router.push("/hr-dashboard");
+      router.refresh();
     } catch (err: any) {
       setError(
         err.response?.data?.message || err.response?.data?.detail || "Login failed. Please check your credentials."

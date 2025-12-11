@@ -1,4 +1,26 @@
+import math
+from decimal import Decimal
+
 from django.db import models
+
+
+class OfficeLocation(models.Model):
+    """Model for company office locations"""
+
+    name = models.CharField(max_length=100)
+    address = models.CharField(max_length=255)
+    latitude = models.FloatField(null=True, blank=True, help_text="Office latitude in decimal degrees")
+    longitude = models.FloatField(null=True, blank=True, help_text="Office longitude in decimal degrees")
+    radius_km = models.FloatField(default=10, help_text="Geofence radius in kilometers")
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'office_locations'
+        verbose_name = 'Office Location'
+        verbose_name_plural = 'Office Locations'
+
+    def __str__(self):
+        return self.name
 
 
 class Applicant(models.Model):
@@ -33,6 +55,17 @@ class Applicant(models.Model):
     latitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True, help_text="Applicant's latitude during application")
     longitude = models.DecimalField(max_digits=10, decimal_places=7, null=True, blank=True, help_text="Applicant's longitude during application")
     distance_from_office = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, help_text="Distance in meters from office")
+    office = models.ForeignKey('OfficeLocation', on_delete=models.SET_NULL, null=True, blank=True, related_name='applicants')
+    geo_status = models.CharField(
+        max_length=10,
+        choices=[
+            ('onsite', 'Onsite'),
+            ('offsite', 'Offsite'),
+            ('unknown', 'Unknown'),
+        ],
+        default='unknown',
+        help_text="Classification of applicant location relative to office geofence"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
@@ -41,6 +74,11 @@ class Applicant(models.Model):
         verbose_name = 'Applicant'
         verbose_name_plural = 'Applicants'
         ordering = ['-application_date']
+        indexes = [
+            models.Index(fields=['status'], name='idx_applicant_status'),
+            models.Index(fields=['application_date'], name='idx_applicant_appdate'),
+            models.Index(fields=['email'], name='idx_applicant_email'),
+        ]
     
     def __str__(self):
         return f"{self.first_name} {self.last_name} - {self.email}"
@@ -48,6 +86,12 @@ class Applicant(models.Model):
     @property
     def full_name(self):
         return f"{self.first_name} {self.last_name}"
+
+    @property
+    def application_type(self):
+        if self.distance_from_office is None:
+            return "unknown"
+        return "in_office" if self.distance_from_office <= Decimal('30') else "remote"
     
     def save(self, *args, **kwargs):
         """Override save to automatically set reapplication_date for failed and passed statuses"""
@@ -84,7 +128,33 @@ class Applicant(models.Model):
                     self.reapplication_date = date.today() + timedelta(days=90)
                 elif self.status == 'failed_onboarding':
                     self.reapplication_date = date.today() + timedelta(days=180)
-        
+
+        # Compute distance from office if coordinates are available
+        if (
+            self.office
+            and self.latitude is not None
+            and self.longitude is not None
+            and self.office.latitude is not None
+            and self.office.longitude is not None
+        ):
+            lat1 = math.radians(float(self.latitude))
+            lon1 = math.radians(float(self.longitude))
+            lat2 = math.radians(float(self.office.latitude))
+            lon2 = math.radians(float(self.office.longitude))
+
+            dlat = lat2 - lat1
+            dlon = lon2 - lon1
+
+            a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+            distance_m = 6371000 * c  # Earth radius in meters
+
+            self.distance_from_office = Decimal(str(round(distance_m, 2)))
+            radius_limit_m = float(self.office.radius_km or 0) * 1000
+            self.geo_status = 'onsite' if distance_m <= radius_limit_m else 'offsite'
+        else:
+            self.geo_status = 'unknown'
+
         super().save(*args, **kwargs)
 
 

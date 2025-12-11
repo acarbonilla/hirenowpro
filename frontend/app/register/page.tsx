@@ -39,7 +39,7 @@ export default function RegisterPage() {
   useEffect(() => {
     const getLocation = async () => {
       try {
-        const coords = await getCurrentLocation();
+        const coords = await getCurrentLocation(3000);
         setLocation(coords);
         setLocationError("");
       } catch (error: any) {
@@ -112,10 +112,10 @@ export default function RegisterPage() {
       // Prepare data with location if available
       const registrationData = {
         ...formData,
-        ...(location && {
-          latitude: location.latitude,
-          longitude: location.longitude,
-        }),
+        applicant_lat: location?.latitude ?? null,
+        applicant_lng: location?.longitude ?? null,
+        latitude: location?.latitude ?? null,
+        longitude: location?.longitude ?? null,
       };
 
       console.log("Sending registration data:", registrationData);

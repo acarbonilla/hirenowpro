@@ -1,22 +1,30 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from accounts.permissions import IsHR
 from django.db.models import Q
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
-from .models import Applicant, ApplicantDocument
+from .models import Applicant, ApplicantDocument, OfficeLocation
 from .serializers import (
-    ApplicantSerializer, 
+    ApplicantSerializer,
     ApplicantCreateSerializer,
     ApplicantListSerializer,
-    ApplicantDocumentSerializer
+    ApplicantDocumentSerializer,
+    OfficeLocationSerializer,
 )
 from .serializers_history import (
     ApplicantHistorySerializer,
     ApplicantDetailHistorySerializer
 )
+
+
+class OfficeLocationViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = OfficeLocation.objects.filter(is_active=True)
+    serializer_class = OfficeLocationSerializer
+    permission_classes = [AllowAny]
 
 
 class ApplicantViewSet(viewsets.ModelViewSet):
@@ -33,21 +41,25 @@ class ApplicantViewSet(viewsets.ModelViewSet):
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
+        if self.action == 'list':
+            return ApplicantListSerializer
         if self.action == 'create':
             return ApplicantCreateSerializer
-        elif self.action == 'list':
-            return ApplicantListSerializer
         return ApplicantSerializer
     
     def get_permissions(self):
-        """Allow anyone to create applicant and view applicants (public access)"""
-        if self.action in ['create', 'list', 'retrieve', 'update', 'partial_update', 'history', 'full_history']:
+        """Allow anyone to create; restrict management to HR"""
+        if self.action in ['create']:
             return [AllowAny()]
-        return super().get_permissions()
+        return [IsAuthenticated(), IsHR()]
     
     def get_queryset(self):
-        """Filter applicants based on query parameters"""
-        queryset = super().get_queryset()
+        """Filter applicants with relationship optimization based on query parameters"""
+        # Optimize common relations to avoid N+1 queries in lists
+        queryset = super().get_queryset().prefetch_related(
+            'interviews',
+            'results'
+        )
         
         # Filter by status
         status_param = self.request.query_params.get('status', None)
@@ -68,6 +80,7 @@ class ApplicantViewSet(viewsets.ModelViewSet):
                 Q(email__icontains=search)
             )
         
+        # Always return most recent first
         return queryset.order_by('-application_date')
     
     def create(self, request, *args, **kwargs):

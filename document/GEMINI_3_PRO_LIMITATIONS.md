@@ -130,3 +130,4 @@ Settings: `backend/core/settings.py`
 
 The current setup is optimal for reliability and cost-effectiveness! 🎯
 
+

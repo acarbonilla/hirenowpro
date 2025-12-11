@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import axios from "axios";
@@ -33,14 +33,18 @@ interface Result {
   problem_solving_score?: number;
 }
 
+type PriorityFilter = "all" | "urgent" | "normal";
+
 export default function HRReviewQueuePage() {
   const router = useRouter();
+
   const [interviews, setInterviews] = useState<Interview[]>([]);
   const [results, setResults] = useState<Result[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
   const [showReviewedOnly, setShowReviewedOnly] = useState(false);
-  const [priorityFilter, setPriorityFilter] = useState<"all" | "urgent" | "normal">("all");
+  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("all");
   const [filters, setFilters] = useState({
     position: "all",
     dateFrom: "",
@@ -51,54 +55,17 @@ export default function HRReviewQueuePage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(20);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
-
-  useEffect(() => {
-    // Reset to first page when items per page changes
-    setCurrentPage(1);
-  }, [itemsPerPage]);
-
-  const fetchData = async () => {
-    setLoading(true);
-    try {
-      const token = getHRToken();
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      // Fetch interviews and results in parallel
-      // Use review_queue=true to only get results that need review (no final decision yet, scores 50-75)
-      const [interviewsRes, resultsRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/interviews/`, { headers }),
-        axios.get(`${API_BASE_URL}/results/?review_queue=true`, { headers }),
-      ]);
-
-      const fetchedInterviews = interviewsRes.data.results || interviewsRes.data || [];
-      const fetchedResults = resultsRes.data.results || resultsRes.data || [];
-
-      setInterviews(Array.isArray(fetchedInterviews) ? fetchedInterviews : []);
-      setResults(Array.isArray(fetchedResults) ? fetchedResults : []);
-    } catch (error: any) {
-      console.error("Error fetching data:", error);
-
-      if (error.response?.status === 401) {
-        setError("Authentication required. Redirecting to login...");
-        setTimeout(() => {
-          router.push("/hr-login");
-        }, 1500);
-      } else {
-        setError(error.response?.data?.detail || "Failed to load interviews");
-      }
-    } finally {
-      setLoading(false);
-    }
+  // ==========================
+  // Helpers
+  // ==========================
+  const normalize = (data: any) => {
+    if (Array.isArray(data)) return data;
+    if (data?.results) return data.results;
+    return [];
   };
 
-  const getResultForInterview = (interviewId: number) => {
-    return results.find((r) => r.interview === interviewId);
-  };
+  const getResultForInterview = (interviewId: number) => results.find((r) => r.interview === interviewId);
 
-  // Calculate days since interview
   const getDaysSinceInterview = (interview: Interview) => {
     const interviewDate = new Date(interview.created_at);
     const now = new Date();
@@ -107,8 +74,7 @@ export default function HRReviewQueuePage() {
     return diffDays;
   };
 
-  // Determine priority based on days waiting
-  const getPriority = (interview: Interview, result?: Result) => {
+  const getPriority = (interview: Interview, result?: Result | undefined): PriorityFilter => {
     if (!result) return "normal";
     if (result.hr_reviewed_at) return "normal";
     const days = getDaysSinceInterview(interview);
@@ -158,62 +124,171 @@ export default function HRReviewQueuePage() {
     );
   };
 
-  // Filter for review queue - backend already filters by review_queue=true
-  // Here we just apply additional frontend filters
-  const filteredInterviews = interviews.filter((interview) => {
-    const result = getResultForInterview(interview.id);
+  // ==========================
+  // Data fetching (Abort-safe, no axios timeout)
+  // ==========================
+  const fetchData = async (opts: { showLoading?: boolean; signal?: AbortSignal } = {}) => {
+    const { showLoading = true, signal } = opts;
 
-    // Only show interviews with results (should always be true since backend filters)
-    if (!result) return false;
+    if (showLoading) setLoading(true);
 
-    // Filter by priority
-    if (priorityFilter !== "all") {
-      const priority = getPriority(interview, result);
-      if (priority !== priorityFilter) return false;
+    try {
+      const token = getHRToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+
+      const [interviewsRes, resultsRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/interviews/?page_size=10`, {
+          headers,
+          signal,
+        }),
+        axios.get(`${API_BASE_URL}/results/?review_queue=true&page_size=10`, {
+          headers,
+          signal,
+        }),
+      ]);
+
+      const fetchedInterviews: Interview[] = normalize(interviewsRes.data);
+      const fetchedResults: Result[] = normalize(resultsRes.data);
+
+      setInterviews(fetchedInterviews);
+      setResults(fetchedResults);
+
+      sessionStorage.setItem(
+        "hr_review_cache",
+        JSON.stringify({
+          interviews: fetchedInterviews,
+          results: fetchedResults,
+          timestamp: Date.now(),
+        })
+      );
+    } catch (err: any) {
+      // HMR / unmount aborts → ignore
+      if (axios.isCancel(err) || err?.name === "CanceledError" || err?.code === "ERR_CANCELED") {
+        console.warn("HR review fetch aborted");
+        return;
+      }
+
+      console.error("Error fetching HR review data:", err);
+      setError("Failed to load review queue.");
+    } finally {
+      if (showLoading) setLoading(false);
     }
+  };
 
-    // Filter by position
-    if (filters.position !== "all" && interview.position_type !== filters.position) {
-      return false;
-    }
+  // ==========================
+  // Initial load (cache-first + abort controller)
+  // ==========================
+  useEffect(() => {
+    const controller = new AbortController();
 
-    // Date range filter
-    if (filters.dateFrom) {
+    const load = async () => {
+      const cache = sessionStorage.getItem("hr_review_cache");
+
+      if (cache) {
+        try {
+          const parsed = JSON.parse(cache);
+          if (parsed?.interviews && parsed?.results) {
+            setInterviews(parsed.interviews);
+            setResults(parsed.results);
+            setLoading(false);
+            // background refresh
+            fetchData({ showLoading: false, signal: controller.signal });
+            return;
+          }
+        } catch {
+          // ignore broken cache
+        }
+      }
+
+      // no cache → normal fetch
+      fetchData({ showLoading: true, signal: controller.signal });
+    };
+
+    load();
+
+    return () => controller.abort();
+  }, []);
+
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [itemsPerPage, priorityFilter, filters, showReviewedOnly]);
+
+  // ==========================
+  // Derived data (memoized)
+  // ==========================
+  const filteredInterviews = useMemo(() => {
+    if (!Array.isArray(interviews) || interviews.length === 0) return [];
+
+    return interviews.filter((interview) => {
+      const result = getResultForInterview(interview.id);
+
+      if (!result) return false;
+
+      // reviewed vs pending toggle
+      if (showReviewedOnly && !result.hr_reviewed_at) return false;
+      if (!showReviewedOnly && result.hr_reviewed_at) return false;
+
+      // priority
+      if (priorityFilter !== "all") {
+        const priority = getPriority(interview, result);
+        if (priority !== priorityFilter) return false;
+      }
+
+      // position
+      if (filters.position !== "all" && interview.position_type !== filters.position) {
+        return false;
+      }
+
+      // dates
       const interviewDate = new Date(interview.created_at);
-      const fromDate = new Date(filters.dateFrom);
-      if (interviewDate < fromDate) return false;
-    }
-    if (filters.dateTo) {
-      const interviewDate = new Date(interview.created_at);
-      const toDate = new Date(filters.dateTo);
-      toDate.setHours(23, 59, 59, 999);
-      if (interviewDate > toDate) return false;
-    }
 
-    return true;
-  });
+      if (filters.dateFrom) {
+        const fromDate = new Date(filters.dateFrom);
+        if (interviewDate < fromDate) return false;
+      }
 
-  // Calculate statistics
-  // Since backend filters with review_queue=true, all results are pending reviews
-  const pendingReviews = results.length;
-  const urgentReviews = interviews.filter((i) => {
-    const result = getResultForInterview(i.id);
-    return result && getDaysSinceInterview(i) >= 3;
-  }).length;
-  // For reviewed today, we would need a separate API call with different filters
-  // For now, set to 0 since we're only showing pending reviews
+      if (filters.dateTo) {
+        const toDate = new Date(filters.dateTo);
+        toDate.setHours(23, 59, 59, 999);
+        if (interviewDate > toDate) return false;
+      }
+
+      return true;
+    });
+  }, [interviews, results, priorityFilter, filters, showReviewedOnly]);
+
+  const pendingReviews = useMemo(() => results.length, [results]);
+
+  const urgentReviews = useMemo(
+    () =>
+      interviews.filter((i) => {
+        const result = getResultForInterview(i.id);
+        return result && !result.hr_reviewed_at && getDaysSinceInterview(i) >= 3;
+      }).length,
+    [interviews, results]
+  );
+
   const reviewedToday = 0;
 
-  // Pagination calculation
-  const totalPages = Math.ceil(filteredInterviews.length / itemsPerPage);
-  const startIndex = (currentPage - 1) * itemsPerPage;
-  const endIndex = startIndex + itemsPerPage;
-  const paginatedInterviews = filteredInterviews.slice(startIndex, endIndex);
+  // Pagination
+  const safeItemsPerPage = itemsPerPage || 10;
+  const totalPages = Math.max(1, Math.ceil(filteredInterviews.length / safeItemsPerPage));
+  const startIndex = (currentPage - 1) * safeItemsPerPage;
+  const endIndex = startIndex + safeItemsPerPage;
 
+  const paginatedInterviews = useMemo(
+    () => filteredInterviews.slice(startIndex, endIndex),
+    [filteredInterviews, startIndex, endIndex]
+  );
+
+  // ==========================
+  // Render branches
+  // ==========================
   if (loading) {
     return (
       <div className="flex items-center justify-center h-96">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-orange-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-orange-600" />
       </div>
     );
   }
@@ -224,15 +299,28 @@ export default function HRReviewQueuePage() {
         <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
           <div className="flex items-center space-x-3 mb-3">
             <span className="text-2xl">⚠️</span>
-            <h3 className="text-lg font-semibold text-red-900">Error</h3>
+            <h3 className="text-lg font-semibold text-red-900">Error Loading Review Queue</h3>
           </div>
-          <p className="text-red-700">{error}</p>
-          {error.includes("Authentication") && <p className="text-sm text-red-600 mt-2">Please log in again.</p>}
+          <p className="text-red-700 mb-4">{error}</p>
+          <button
+            onClick={() => {
+              setError("");
+              setLoading(true);
+              const controller = new AbortController();
+              fetchData({ showLoading: true, signal: controller.signal });
+            }}
+            className="w-full bg-purple-600 text-white py-2 px-4 rounded-lg hover:bg-purple-700 transition-colors"
+          >
+            Retry
+          </button>
         </div>
       </div>
     );
   }
 
+  // ==========================
+  // Main Render
+  // ==========================
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -254,7 +342,7 @@ export default function HRReviewQueuePage() {
           </div>
         </div>
 
-        {/* Statistics Cards */}
+        {/* Stats */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div className="bg-gradient-to-br from-yellow-50 to-orange-50 border-2 border-yellow-200 rounded-xl p-4 shadow-md hover:shadow-lg transition-shadow">
             <div className="flex items-center justify-between">
@@ -339,7 +427,9 @@ export default function HRReviewQueuePage() {
             Reset All
           </button>
         </div>
+
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          {/* Review Status */}
           <div>
             <label className="flex items-center space-x-1 text-sm font-medium text-gray-700 mb-2">
               <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -374,6 +464,7 @@ export default function HRReviewQueuePage() {
             </div>
           </div>
 
+          {/* Priority Filter */}
           <div>
             <label className="flex items-center space-x-1 text-sm font-medium text-gray-700 mb-2">
               <svg className="w-4 h-4 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
@@ -387,7 +478,7 @@ export default function HRReviewQueuePage() {
             </label>
             <select
               value={priorityFilter}
-              onChange={(e) => setPriorityFilter(e.target.value as "all" | "urgent" | "normal")}
+              onChange={(e) => setPriorityFilter(e.target.value as PriorityFilter)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
             >
               <option value="all">All Priority</option>
@@ -396,6 +487,7 @@ export default function HRReviewQueuePage() {
             </select>
           </div>
 
+          {/* Position Filter */}
           <div>
             <label className="flex items-center space-x-1 text-sm font-medium text-gray-700 mb-2">
               <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -422,7 +514,7 @@ export default function HRReviewQueuePage() {
           </div>
         </div>
 
-        {/* Date Range Filter */}
+        {/* Date Range */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="flex items-center space-x-1 text-sm font-medium text-gray-700 mb-2">
@@ -465,7 +557,7 @@ export default function HRReviewQueuePage() {
         </div>
       </div>
 
-      {/* Review Queue Table */}
+      {/* Table */}
       <div className="bg-white rounded-xl shadow-md border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -500,6 +592,7 @@ export default function HRReviewQueuePage() {
                   const result = getResultForInterview(interview.id);
                   const priority = getPriority(interview, result);
                   const daysWaiting = getDaysSinceInterview(interview);
+
                   return (
                     <tr
                       key={interview.id}
@@ -579,7 +672,7 @@ export default function HRReviewQueuePage() {
                         />
                       </svg>
                       <p className="text-gray-500 font-medium">
-                        {showReviewedOnly ? "No reviewed interviews found" : "No pending reviews! Great job! 🎉"}
+                        {showReviewedOnly ? "No reviewed interviews found" : "No pending reviews! 🎉"}
                       </p>
                       <p className="text-sm text-gray-400 mt-1">
                         {showReviewedOnly
@@ -624,6 +717,7 @@ export default function HRReviewQueuePage() {
                   </select>
                 </div>
               </div>
+
               {totalPages > 1 && (
                 <div className="flex items-center space-x-2">
                   <button
@@ -634,15 +728,10 @@ export default function HRReviewQueuePage() {
                     Previous
                   </button>
 
-                  {/* Page numbers */}
                   <div className="flex items-center space-x-1">
                     {Array.from({ length: totalPages }, (_, i) => i + 1)
-                      .filter((page) => {
-                        // Show first, last, current, and adjacent pages
-                        return page === 1 || page === totalPages || Math.abs(page - currentPage) <= 1;
-                      })
+                      .filter((page) => page === 1 || page === totalPages || Math.abs(page - currentPage) <= 1)
                       .map((page, index, array) => {
-                        // Add ellipsis if there's a gap
                         const showEllipsisBefore = index > 0 && page - array[index - 1] > 1;
                         return (
                           <div key={page} className="flex items-center space-x-1">

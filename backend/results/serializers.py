@@ -217,12 +217,18 @@ class InterviewResultListSerializer(serializers.ModelSerializer):
     
     def get_recommendation(self, obj):
         """Get recommendation based on score and passed status"""
-        # 75-100 = hire (strong performance, clear pass)
-        # 50-74.9 = review (borderline cases that need HR judgment)
+        # Use dynamic thresholds from SystemSettings
+        from .models import SystemSettings
+        passing_threshold = SystemSettings.get_passing_threshold()
+        review_threshold = SystemSettings.get_review_threshold()
+        
+        # Example: passing=70, review=50
+        # 70-100 = hire (strong performance, clear pass)
+        # 50-69.9 = review (borderline cases that need HR judgment)
         # 0-49 = reject (weak performance, clear fail)
-        if obj.final_score >= 75:
+        if obj.final_score >= passing_threshold:
             return 'hire'
-        elif 50 <= obj.final_score < 75:
+        elif obj.final_score >= review_threshold:
             return 'review'
         else:
             return 'reject'

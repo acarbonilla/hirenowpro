@@ -163,19 +163,19 @@ export default function InterviewPage() {
         const qId = questionId || questions[currentQuestionIndex]?.id;
         const alreadyRecorded = qId && recordedVideos[qId];
 
-        console.log('Auto-record check:', {
+        console.log("Auto-record check:", {
           questionId: qId,
           alreadyRecorded,
           cameraReady,
           isRecording,
-          currentQuestionIndex
+          currentQuestionIndex,
         });
 
         if (cameraReady && !isRecording && !alreadyRecorded) {
-          console.log('Auto-starting recording for question', qId);
+          console.log("Auto-starting recording for question", qId);
           startRecording();
         } else {
-          console.log('Skipping auto-record:', { cameraReady, isRecording, alreadyRecorded });
+          console.log("Skipping auto-record:", { cameraReady, isRecording, alreadyRecorded });
         }
       }, 1000);
     };
@@ -224,8 +224,8 @@ export default function InterviewPage() {
     const audioTracks = webcamRef.current.stream.getAudioTracks();
     const videoTracks = webcamRef.current.stream.getVideoTracks();
 
-    console.log('Starting recording - Audio tracks:', audioTracks.length);
-    console.log('Starting recording - Video tracks:', videoTracks.length);
+    console.log("Starting recording - Audio tracks:", audioTracks.length);
+    console.log("Starting recording - Video tracks:", videoTracks.length);
 
     if (audioTracks.length === 0) {
       setError("No microphone detected. Please enable microphone access and refresh the page.");
@@ -243,7 +243,7 @@ export default function InterviewPage() {
         enabled: track.enabled,
         muted: track.muted,
         readyState: track.readyState,
-        settings: track.getSettings()
+        settings: track.getSettings(),
       });
     });
 
@@ -252,19 +252,19 @@ export default function InterviewPage() {
     setSuccessMessage("");
 
     // Configure MediaRecorder with audio codec
-    let options = { mimeType: 'video/webm;codecs=vp9,opus' };
+    let options = { mimeType: "video/webm;codecs=vp9,opus" };
 
     // Fallback if vp9/opus not supported
     if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-      console.log('vp9,opus not supported, trying vp8,opus');
-      options = { mimeType: 'video/webm;codecs=vp8,opus' };
+      console.log("vp9,opus not supported, trying vp8,opus");
+      options = { mimeType: "video/webm;codecs=vp8,opus" };
       if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-        console.log('vp8,opus not supported, using default video/webm');
-        options = { mimeType: 'video/webm' };
+        console.log("vp8,opus not supported, using default video/webm");
+        options = { mimeType: "video/webm" };
       }
     }
 
-    console.log('Using MIME type:', options.mimeType);
+    console.log("Using MIME type:", options.mimeType);
 
     const mediaRecorder = new MediaRecorder(webcamRef.current.stream, options);
 
@@ -273,7 +273,7 @@ export default function InterviewPage() {
     mediaRecorder.start();
     setIsRecording(true);
 
-    console.log('MediaRecorder started with state:', mediaRecorder.state);
+    console.log("MediaRecorder started with state:", mediaRecorder.state);
   }, [handleDataAvailable]);
 
   const stopRecording = useCallback(() => {
@@ -341,7 +341,13 @@ export default function InterviewPage() {
       addRecordedVideo(currentQuestion.id, blob);
 
       const isLastQuestion = currentQuestionIndex >= questions.length - 1;
-      const totalAnswered = Object.keys(recordedVideos).length + 1; // +1 for the one we just added
+      // Calculate total answered AFTER adding to state - use the new count
+      const newRecordedVideos = { ...recordedVideos, [currentQuestion.id]: blob };
+      const totalAnswered = Object.keys(newRecordedVideos).length;
+
+      console.log(
+        `✓ Question ${currentQuestionIndex + 1} recorded. Total answered: ${totalAnswered} of ${questions.length}`
+      );
 
       if (isLastQuestion) {
         setSuccessMessage("✓ Perfect! All questions answered. Ready to submit your interview!");
@@ -423,9 +429,10 @@ export default function InterviewPage() {
 
       await interviewAPI.submitInterview(interviewId);
 
-      console.log("Interview submitted successfully! Redirecting to processing page...");
-      // Redirect to processing page (AI analysis takes 5-10 minutes)
-      router.push(`/processing/${interviewId}`);
+      console.log("Interview submitted successfully! Redirecting to completion page...");
+      // Redirect to a friendly completion screen; user can then choose
+      // to view processing status or return to dashboard.
+      router.push(`/interview-complete?id=${interviewId}`);
     } catch (err: any) {
       console.error("Submit error:", err);
       console.error("Error response:", err.response?.data);
@@ -598,103 +605,7 @@ export default function InterviewPage() {
         </div>
       )}
 
-      {/* Submitting Interview Modal - Full Screen */}
-      {isSubmitting && (
-        <div className="fixed inset-0 bg-gradient-to-br from-purple-600 via-blue-600 to-indigo-700 z-50 flex items-center justify-center p-4 sm:p-6 md:p-8">
-          <div className="max-w-2xl w-full">
-            {/* Animated Icon */}
-            <div className="flex justify-center mb-6 sm:mb-8">
-              <div className="relative">
-                {/* Outer pulse ring */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-32 h-32 sm:w-40 sm:h-40 md:w-48 md:h-48 bg-white bg-opacity-20 rounded-full animate-ping"></div>
-                </div>
-                {/* Middle ring */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-28 h-28 sm:w-32 sm:h-32 md:w-40 md:h-40 bg-white bg-opacity-30 rounded-full animate-pulse"></div>
-                </div>
-                {/* Inner circle with icon */}
-                <div className="relative flex items-center justify-center">
-                  <div className="w-24 h-24 sm:w-28 sm:h-28 md:w-32 md:h-32 bg-white bg-opacity-40 rounded-full flex items-center justify-center backdrop-blur-sm border-4 border-white">
-                    <Loader2 className="w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 text-white animate-spin" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Title */}
-            <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white text-center mb-3 sm:mb-4 px-4">
-              Submitting Your Interview
-            </h1>
-            <p className="text-base sm:text-lg md:text-xl text-white text-center mb-8 sm:mb-10 md:mb-12 px-4 opacity-90">
-              Please wait while we finalize your responses...
-            </p>
-
-            {/* Progress Steps */}
-            <div className="bg-white bg-opacity-10 backdrop-blur-md rounded-2xl p-4 sm:p-6 md:p-8 mb-6 sm:mb-8 border border-white border-opacity-20 shadow-xl">
-              <div className="space-y-4 sm:space-y-6">
-                {/* Step 1 */}
-                <div className="flex items-center space-x-3 sm:space-x-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-green-500 rounded-full flex items-center justify-center shadow-lg">
-                      <CheckCircle className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
-                    </div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-base sm:text-lg font-semibold text-white">All Questions Answered</h3>
-                    <p className="text-sm text-white opacity-80">
-                      {questions.length} video responses recorded successfully
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 2 */}
-                <div className="flex items-center space-x-3 sm:space-x-4">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white bg-opacity-30 rounded-full flex items-center justify-center animate-pulse shadow-lg">
-                      <Loader2 className="w-6 h-6 sm:w-7 sm:h-7 text-white animate-spin" />
-                    </div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-base sm:text-lg font-semibold text-white">Finalizing Submission</h3>
-                    <p className="text-sm text-white opacity-80">
-                      Preparing your interview for AI analysis...
-                    </p>
-                  </div>
-                </div>
-
-                {/* Step 3 */}
-                <div className="flex items-center space-x-3 sm:space-x-4 opacity-70">
-                  <div className="flex-shrink-0">
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center shadow-lg">
-                      <Clock className="w-6 h-6 sm:w-7 sm:h-7 text-white" />
-                    </div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <h3 className="text-base sm:text-lg font-semibold text-white">AI Analysis</h3>
-                    <p className="text-sm text-white opacity-80">
-                      Will begin processing after submission (5-10 minutes)
-                    </p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Info Box */}
-            <div className="bg-yellow-400 bg-opacity-25 border-2 border-yellow-300 border-opacity-50 rounded-xl p-4 sm:p-5 md:p-6 backdrop-blur-sm shadow-xl">
-              <div className="flex items-start space-x-3">
-                <AlertCircle className="w-5 h-5 sm:w-6 sm:h-6 text-yellow-100 flex-shrink-0 mt-0.5" />
-                <div className="flex-1 min-w-0">
-                  <p className="text-white font-semibold mb-1 text-sm sm:text-base">Please don't close this window</p>
-                  <p className="text-white opacity-90 text-xs sm:text-sm">
-                    Your interview is being submitted. You'll be automatically redirected to the processing page once complete.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Submitting Interview Modal removed – submit now redirects immediately to completion page */}
 
       <div className="max-w-6xl mx-auto">
         {/* Camera Permission Notice */}
@@ -784,27 +695,30 @@ export default function InterviewPage() {
             <div className="relative bg-gray-900 rounded-lg overflow-hidden aspect-video mb-4">
               <Webcam
                 ref={webcamRef}
-                audio={{
+                audio={true}
+                audioConstraints={{
                   echoCancellation: true,
                   noiseSuppression: true,
-                  autoGainControl: true
-                } as MediaTrackConstraints}
+                  autoGainControl: true,
+                }}
                 videoConstraints={{
-                  facingMode: "user"
+                  facingMode: "user",
                 }}
                 muted={true}
                 onUserMedia={(stream) => {
                   const audioTracks = stream.getAudioTracks();
                   const videoTracks = stream.getVideoTracks();
-                  console.log('Media initialized - Audio tracks:', audioTracks.length);
-                  console.log('Media initialized - Video tracks:', videoTracks.length);
+                  console.log("Media initialized - Audio tracks:", audioTracks.length);
+                  console.log("Media initialized - Video tracks:", videoTracks.length);
 
                   if (audioTracks.length === 0) {
-                    setError("Microphone not detected. Please check your browser permissions and allow microphone access.");
+                    setError(
+                      "Microphone not detected. Please check your browser permissions and allow microphone access."
+                    );
                     setCameraReady(false);
                   } else {
-                    console.log('Audio track settings:', audioTracks[0].getSettings());
-                    console.log('Audio track enabled:', audioTracks[0].enabled);
+                    console.log("Audio track settings:", audioTracks[0].getSettings());
+                    console.log("Audio track enabled:", audioTracks[0].enabled);
                     setCameraReady(true);
                     setError("");
                   }
@@ -885,8 +799,9 @@ export default function InterviewPage() {
           {/* Question Section */}
           <div className="bg-white rounded-lg shadow-md p-6">
             <div
-              className={`mb-6 transition-all duration-500 ${isTransitioning ? "opacity-0 scale-95" : "opacity-100 scale-100"
-                }`}
+              className={`mb-6 transition-all duration-500 ${
+                isTransitioning ? "opacity-0 scale-95" : "opacity-100 scale-100"
+              }`}
             >
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-gray-600">
@@ -948,18 +863,42 @@ export default function InterviewPage() {
                   <p className="text-xs text-blue-700 font-semibold">
                     💡 Just listen, answer, and click stop - we handle the rest!
                   </p>
+                  <p className="mt-2 text-xs text-blue-700">
+                    Note: If you close this tab before submitting your interview, some answers may not be saved and you
+                    may need to restart.
+                  </p>
                 </div>
               </div>
             </div>
 
             {/* Submission Status */}
             <div className="space-y-4">
-              {/* Show completion message when all answered but before auto-submit triggers */}
-              {Object.keys(recordedVideos).length === questions.length && !isSubmitting && (
-                <div className="w-full bg-green-100 border-2 border-green-400 text-green-800 py-4 rounded-lg font-semibold flex items-center justify-center animate-pulse">
-                  <CheckCircle className="w-6 h-6 mr-2" />
-                  All questions completed! Auto-submitting in 3 seconds...
-                </div>
+              {/* Show completion message and explicit submit when all questions are answered */}
+              {Object.keys(recordedVideos).length === questions.length && (
+                <>
+                  <div className="w-full bg-green-100 border-2 border-green-400 text-green-800 py-4 rounded-lg font-semibold flex items-center justify-center">
+                    <CheckCircle className="w-6 h-6 mr-2" />
+                    All questions completed! You&apos;re ready to submit your interview.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleSubmitInterview()}
+                    disabled={isSubmitting}
+                    className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                        Submitting your interview...
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-5 h-5 mr-2" />
+                        Submit Interview
+                      </>
+                    )}
+                  </button>
+                </>
               )}
             </div>
           </div>

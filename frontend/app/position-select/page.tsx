@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import React, { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { interviewAPI, questionAPI } from "@/lib/api";
+import { applicantAPI, interviewAPI, questionAPI } from "@/lib/api";
 import { useStore } from "@/store/useStore";
 import { Briefcase, Headphones, Monitor, TrendingUp, Users, Info, ArrowRight, Loader2 } from "lucide-react";
 
@@ -75,15 +75,15 @@ const positions: Position[] = [
   },
 ];
 
-export default function PositionSelectPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const { currentApplicant, setCurrentInterview } = useStore();
-
+function PositionSelectPageInner() {
   const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
   const [hoveredPosition, setHoveredPosition] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState("");
+
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { currentApplicant, setCurrentApplicant, setCurrentInterview } = useStore();
 
   const applicantId = searchParams.get("applicant_id");
 
@@ -94,9 +94,25 @@ export default function PositionSelectPage() {
     }
   }, [applicantId, currentApplicant, router]);
 
+  useEffect(() => {
+    const loadApplicant = async () => {
+      if (!currentApplicant && applicantId) {
+        try {
+          const response = await applicantAPI.getApplicant(parseInt(applicantId, 10));
+          const applicant = response.data.applicant || response.data;
+          setCurrentApplicant(applicant);
+        } catch (error) {
+          console.error("Failed to fetch applicant for geo status banner", error);
+        }
+      }
+    };
+
+    loadApplicant();
+  }, [applicantId, currentApplicant, setCurrentApplicant]);
+
   const handleSelectPosition = (positionCode: string) => {
-    setSelectedPosition(positionCode);
     setError("");
+    setSelectedPosition(positionCode);
   };
 
   const handleSubmit = async () => {
@@ -149,6 +165,21 @@ export default function PositionSelectPage() {
             specific skills.
           </p>
         </div>
+
+        {/* Geofence status */}
+        {currentApplicant?.geo_status && (
+          <div className="max-w-3xl mx-auto mb-8 p-4 rounded-lg border bg-white shadow-sm">
+            {currentApplicant.geo_status === "onsite" && (
+              <p className="text-green-700 text-sm font-medium">You applied from an approved location.</p>
+            )}
+            {currentApplicant.geo_status === "offsite" && (
+              <p className="text-amber-700 text-sm font-medium">Your location is outside the office radius.</p>
+            )}
+            {currentApplicant.geo_status === "unknown" && (
+              <p className="text-blue-700 text-sm font-medium">Location unavailable; application marked as online.</p>
+            )}
+          </div>
+        )}
 
         {/* Error Message */}
         {error && (
@@ -287,5 +318,13 @@ export default function PositionSelectPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function PositionSelectPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center">Loading...</div>}>
+      <PositionSelectPageInner />
+    </Suspense>
   );
 }

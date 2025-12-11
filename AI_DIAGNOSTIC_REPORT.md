@@ -3,7 +3,8 @@
 ## ✅ API Key Status: WORKING
 
 The Gemini API key is properly configured and functional:
-- **API Key**: `AIzaSyBw-xn4p_G7W4Sq...` (configured in `.env`)
+
+- **API Key**: `A...` (configured in `.env`)
 - **Status**: ✅ Verified working with test script
 - **Model**: `gemini-2.5-flash`
 
@@ -12,6 +13,7 @@ The Gemini API key is properly configured and functional:
 ### Backend Improvements (`backend/training/views.py`)
 
 1. **Enhanced Error Logging**
+
    - Added detailed logging at each step (AI service init, transcription, feedback generation)
    - Shows file path, size, and existence checks
    - Separates transcription errors from feedback generation errors
@@ -27,6 +29,7 @@ The Gemini API key is properly configured and functional:
 ### Frontend Improvements (`frontend/app/training/session/[id]/page.tsx`)
 
 1. **Enhanced Error Display**
+
    - Shows detailed error information including error type
    - Displays technical error details in a monospace box for debugging
    - Maintains user-friendly error messages
@@ -41,6 +44,7 @@ Now that we have better logging, please try the following:
 1. **Record a new training response** in the browser
 2. **Check the Django console** (the terminal running `py manage.py runserver`)
 3. **Look for the detailed logs** that will now show:
+
    ```
    🔧 Initializing AI service...
    ✓ AI service initialized successfully
@@ -58,28 +62,36 @@ Now that we have better logging, please try the following:
 ## 🔧 Common Issues and Solutions
 
 ### Issue 1: No Audio Detected
+
 **Symptoms**: Error mentions "transcription" or "no audio"
-**Solution**: 
+**Solution**:
+
 - Check microphone permissions in browser
 - Ensure you're speaking during recording
 - Test microphone with browser's built-in test
 
 ### Issue 2: Video File Not Found
+
 **Symptoms**: "File exists: False" in logs
 **Solution**:
+
 - Check `MEDIA_ROOT` setting in Django
 - Ensure media directory has write permissions
 - Verify video is being uploaded correctly
 
 ### Issue 3: Gemini API Rate Limit
+
 **Symptoms**: Error mentions "quota" or "rate limit"
 **Solution**:
+
 - Wait a few minutes and try again
 - Check Gemini API quota in Google Cloud Console
 
 ### Issue 4: Video Format Issue
+
 **Symptoms**: Gemini can't process the video file
 **Solution**:
+
 - Ensure video is in WebM format
 - Check video file isn't corrupted
 - Try with a shorter recording

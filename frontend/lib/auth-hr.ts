@@ -18,14 +18,31 @@ export interface AuthTokens {
   refresh: string;
 }
 
+function clearLegacyTokens() {
+  localStorage.removeItem("access_token");
+  localStorage.removeItem("authToken");
+  localStorage.removeItem("employee");
+  localStorage.removeItem("hr_access");
+  localStorage.removeItem("hr_refresh");
+  localStorage.removeItem("hr_authToken");
+  localStorage.removeItem("hr_refreshToken");
+  localStorage.removeItem("refreshToken");
+  localStorage.removeItem("refresh_token");
+}
+
+function isValidJwt(token: string | null): token is string {
+  return !!token && token.split(".").length === 3;
+}
+
 /**
  * Store HR authentication tokens and user data
  */
 export function setHRAuth(tokens: AuthTokens, user: User) {
   if (typeof window === "undefined") return;
 
-  localStorage.setItem("hr_authToken", tokens.access);
-  localStorage.setItem("hr_refreshToken", tokens.refresh);
+  clearLegacyTokens();
+  localStorage.setItem("hr_access", tokens.access);
+  localStorage.setItem("hr_refresh", tokens.refresh);
   localStorage.setItem("hr_user", JSON.stringify(user));
 }
 
@@ -34,7 +51,12 @@ export function setHRAuth(tokens: AuthTokens, user: User) {
  */
 export function getHRToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("hr_authToken");
+  const token = localStorage.getItem("hr_access");
+  if (!isValidJwt(token)) {
+    clearHRAuth();
+    return null;
+  }
+  return token;
 }
 
 /**
@@ -42,7 +64,8 @@ export function getHRToken(): string | null {
  */
 export function getHRRefreshToken(): string | null {
   if (typeof window === "undefined") return null;
-  return localStorage.getItem("hr_refreshToken");
+  const token = localStorage.getItem("hr_refresh");
+  return isValidJwt(token) ? token : null;
 }
 
 /**
@@ -88,7 +111,6 @@ export function isHRManager(): boolean {
   const user = getHRUser();
   if (!user) return false;
 
-  // Only HR Manager and System Admin can manage users
   const managerRoles = ["hr_admin", "hr_manager", "system_admin"];
   return managerRoles.includes(user.user_type) || managerRoles.includes(user.role || "");
 }
@@ -99,8 +121,8 @@ export function isHRManager(): boolean {
 export function clearHRAuth() {
   if (typeof window === "undefined") return;
 
-  localStorage.removeItem("hr_authToken");
-  localStorage.removeItem("hr_refreshToken");
+  localStorage.removeItem("hr_access");
+  localStorage.removeItem("hr_refresh");
   localStorage.removeItem("hr_user");
 }
 
@@ -110,7 +132,7 @@ export function clearHRAuth() {
 export function isTokenExpired(token: string): boolean {
   try {
     const payload = JSON.parse(atob(token.split(".")[1]));
-    const exp = payload.exp * 1000; // Convert to milliseconds
+    const exp = payload.exp * 1000;
     return Date.now() >= exp;
   } catch {
     return true;

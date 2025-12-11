@@ -5,6 +5,13 @@ from django.db import models
 class User(AbstractUser):
     """Custom User model extending Django's AbstractUser"""
     
+    ROLE_CHOICES = [
+        ('applicant', 'Applicant'),
+        ('hr', 'HR'),
+        ('admin', 'Admin'),
+        ('superadmin', 'Super Admin'),
+    ]
+    
     USER_TYPE_CHOICES = [
         ('recruiter', 'Recruiter'),
         ('hr_admin', 'HR Admin'),
@@ -13,6 +20,7 @@ class User(AbstractUser):
     
     email = models.EmailField(unique=True)
     user_type = models.CharField(max_length=20, choices=USER_TYPE_CHOICES, default='recruiter')
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='applicant')
     
     class Meta:
         db_table = 'users'
@@ -21,6 +29,18 @@ class User(AbstractUser):
     
     def __str__(self):
         return f"{self.username} ({self.get_user_type_display()})"
+
+    @property
+    def normalized_role(self):
+        """Map legacy user_type to role if role not explicitly set"""
+        if self.role:
+            return self.role
+        mapping = {
+            'recruiter': 'hr',
+            'hr_admin': 'admin',
+            'system_admin': 'superadmin',
+        }
+        return mapping.get(self.user_type, 'applicant')
 
 
 class RecruiterProfile(models.Model):

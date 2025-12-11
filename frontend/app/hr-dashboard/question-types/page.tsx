@@ -24,7 +24,7 @@ export default function QuestionTypesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showModal, setShowModal] = useState(false);
-  const [editingType, setEditingType] = useState<PositionType | null>(null);
+  const [editingType, setEditingType] = useState<QuestionType | null>(null);
   const [formData, setFormData] = useState({
     code: "",
     name: "",

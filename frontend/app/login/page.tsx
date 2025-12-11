@@ -31,13 +31,16 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const response = await authAPI.login(formData);
-      const { tokens, user } = response.data;
+      const response = await authAPI.applicantLogin(formData);
+      const tokens = response.data.tokens || { access: response.data.access, refresh: response.data.refresh };
+      const user = response.data.user || response.data;
 
-      // Store tokens in localStorage
-      localStorage.setItem("authToken", tokens.access);
-      localStorage.setItem("refreshToken", tokens.refresh);
-      localStorage.setItem("user", JSON.stringify(user));
+      // Store applicant tokens in localStorage
+      localStorage.removeItem("hr_access");
+      localStorage.removeItem("hr_refresh");
+      localStorage.setItem("applicant_access", tokens.access);
+      localStorage.setItem("applicant_refresh", tokens.refresh);
+      localStorage.setItem("applicant_user", JSON.stringify(user));
 
       // If position is selected, create interview for this applicant
       if (selectedPosition && user.id) {

@@ -10,39 +10,38 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
   const router = useRouter();
   const pathname = usePathname();
   const [user, setUser] = useState<any>(null);
+  const [permissions, setPermissions] = useState<any>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     checkAccess();
-  }, [router]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
 
   const checkAccess = async () => {
-    // Check authentication
     if (!isHRAuthenticated()) {
       router.push("/hr-login");
       return;
     }
 
     try {
-      // Verify user has HR access (not just IT Support)
       const authRes = await authAPI.checkAuth();
-      const permissions = authRes.data.permissions;
+      const perms = authRes.data.permissions;
 
-      // Block IT Support users from HR Dashboard
-      if (permissions.is_it_support && !permissions.is_hr_manager && !permissions.is_hr_recruiter) {
+      if (perms.is_it_support && !perms.is_hr_manager && !perms.is_hr_recruiter) {
         router.push("/it-dashboard");
         return;
       }
 
-      // Allow HR Recruiter, HR Manager, and superusers
-      if (!permissions.is_hr_recruiter && !permissions.is_hr_manager && !permissions.is_superuser) {
+      if (!perms.is_hr_recruiter && !perms.is_hr_manager && !perms.is_superuser) {
         router.push("/hr-login");
         return;
       }
 
       const userData = getHRUser();
       setUser(userData);
+      setPermissions(perms);
       setLoading(false);
     } catch (error) {
       console.error("Access check error:", error);
@@ -52,7 +51,7 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
 
   const handleLogout = async () => {
     try {
-      const refreshToken = localStorage.getItem("hr_refreshToken");
+      const refreshToken = localStorage.getItem("hr_refresh");
       if (refreshToken) {
         await authAPI.logout(refreshToken);
       }
@@ -72,47 +71,47 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
     );
   }
 
-  // Base navigation items for all HR users
   const baseNavigation = [
-    { name: "Overview", href: "/hr-dashboard", icon: "📊" },
-    { name: "HR Review Queue", href: "/hr-dashboard/interviews", icon: "📋" },
-    { name: "Interview Results", href: "/hr-dashboard/results", icon: "📋" },
-    { name: "Applicant History", href: "/hr-dashboard/history", icon: "📚" },
+    { name: "Overview", href: "/hr-dashboard", icon: "🏠" },
+    { name: "HR Review Queue", href: "/hr-dashboard/interviews", icon: "📝" },
+    { name: "Interview Results", href: "/hr-dashboard/results", icon: "📊" },
+    { name: "Applicant History", href: "/hr-dashboard/history", icon: "🗂" },
     { name: "Applicants", href: "/hr-dashboard/applicants", icon: "👥" },
     { name: "Analytics", href: "/hr-dashboard/analytics", icon: "📈" },
-    { name: "AI vs HR Comparison", href: "/hr-dashboard/ai-comparison", icon: "⚖️" },
-    { name: "Token Monitoring", href: "/hr-dashboard/token-monitoring", icon: "💰" },
-    { name: "Positions", href: "/hr-dashboard/positions", icon: "💼" },
+    { name: "AI vs HR Comparison", href: "/hr-dashboard/ai-comparison", icon: "🤖" },
+    { name: "Positions", href: "/hr-dashboard/positions", icon: "🧭" },
     { name: "Questions", href: "/hr-dashboard/questions", icon: "❓" },
-    { name: "Position Types", href: "/hr-dashboard/position-types", icon: "💼" },
-    { name: "Question Types", href: "/hr-dashboard/question-types", icon: "🏷️" },
+    { name: "Question Types", href: "/hr-dashboard/question-types", icon: "📄" },
   ];
 
-  // Add Users menu only for HR Managers
-  const navigation = isHRManager()
-    ? [...baseNavigation, { name: "Users", href: "/hr-dashboard/users", icon: "👤" }]
-    : baseNavigation;
+  const withRestricted = () => {
+    const items = [...baseNavigation];
+    if (permissions?.is_hr_manager || permissions?.is_it_support || permissions?.is_superuser) {
+      items.splice(6, 0, { name: "Token Monitoring", href: "/hr-dashboard/token-monitoring", icon: "🔑" });
+    }
+    if (permissions?.is_superuser) {
+      items.push({ name: "Job Categories", href: "/hr-dashboard/job-categories", icon: "💼" });
+    }
+    if (permissions?.is_hr_manager || permissions?.is_superuser || isHRManager()) {
+      items.push({ name: "Users", href: "/hr-dashboard/users", icon: "👤" });
+    }
+    return items;
+  };
+
+  const navigation = withRestricted();
 
   return (
     <div className="min-h-screen bg-gray-100">
-      {/* Sidebar */}
       <div
         className={`fixed inset-y-0 left-0 z-50 w-64 bg-gradient-to-b from-slate-900 to-purple-900 text-white transform transition-transform duration-300 ease-in-out ${
           isSidebarOpen ? "translate-x-0" : "-translate-x-full"
         }`}
       >
         <div className="flex flex-col h-full">
-          {/* Logo */}
           <div className="flex items-center justify-between p-4 border-b border-purple-800">
             <div className="flex items-center space-x-3">
               <div className="bg-purple-600 p-2 rounded-lg">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -125,7 +124,6 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
             </div>
           </div>
 
-          {/* Navigation */}
           <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
             {navigation.map((item) => {
               const isActive = pathname === item.href;
@@ -144,7 +142,6 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
             })}
           </nav>
 
-          {/* User info and logout */}
           <div className="p-4 border-t border-purple-800">
             <div className="mb-3">
               <p className="text-sm text-gray-400">Signed in as</p>
@@ -155,13 +152,7 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
               onClick={handleLogout}
               className="w-full flex items-center justify-center space-x-2 px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
             >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -175,35 +166,18 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
         </div>
       </div>
 
-      {/* Main content */}
       <div className={`transition-all duration-300 ${isSidebarOpen ? "ml-64" : "ml-0"}`}>
-        {/* Top bar */}
         <div className="bg-white shadow-sm sticky top-0 z-40">
           <div className="flex items-center justify-between px-6 py-4">
-            <button
-              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className="p-2 rounded-lg hover:bg-gray-100 transition-colors"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-6 w-6 text-gray-600"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-              >
+            <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
               </svg>
             </button>
 
             <div className="flex items-center space-x-4">
               <button className="p-2 rounded-lg hover:bg-gray-100 relative">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-6 w-6 text-gray-600"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
                     strokeLinecap="round"
                     strokeLinejoin="round"
@@ -217,7 +191,6 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
           </div>
         </div>
 
-        {/* Page content */}
         <main className="p-6">{children}</main>
       </div>
     </div>

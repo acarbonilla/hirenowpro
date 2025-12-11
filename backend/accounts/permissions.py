@@ -1,97 +1,75 @@
-"""
-Permission helpers for role-based access control
-"""
-from functools import wraps
 from rest_framework.permissions import BasePermission
-from rest_framework.response import Response
-from rest_framework import status
 
 
-def user_in_group(user, group_name):
-    """Check if user belongs to a specific group"""
-    return user.groups.filter(name=group_name).exists()
-
-
-def user_has_any_group(user, group_names):
-    """Check if user belongs to any of the specified groups"""
-    return user.groups.filter(name__in=group_names).exists()
-
-
-# Permission classes for DRF views
-class IsHRRecruiter(BasePermission):
-    """Only HR Recruiters can access"""
+class IsApplicant(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and user_in_group(request.user, 'HR Recruiter')
+        user = request.user
+        return bool(user and user.is_authenticated and getattr(user, "normalized_role", getattr(user, "role", None)) == "applicant")
 
 
-class IsHRManager(BasePermission):
-    """Only HR Managers can access"""
+class IsHR(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and user_in_group(request.user, 'HR Manager')
-
-
-class IsITSupport(BasePermission):
-    """Only IT Support can access"""
-    def has_permission(self, request, view):
-        return request.user.is_authenticated and user_in_group(request.user, 'IT Support')
-
-
-class IsHRStaff(BasePermission):
-    """HR Recruiter OR HR Manager can access"""
-    def has_permission(self, request, view):
-        return request.user.is_authenticated and user_has_any_group(
-            request.user, ['HR Recruiter', 'HR Manager']
+        user = request.user
+        role = getattr(user, "normalized_role", getattr(user, "role", None))
+        return bool(
+            user
+            and user.is_authenticated
+            and (
+                role in ["hr", "admin", "superadmin"]
+                or getattr(user, "is_staff", False)
+            )
         )
 
 
-class IsHRManagerOrITSupport(BasePermission):
-    """HR Manager OR IT Support can access"""
+class IsAdmin(BasePermission):
     def has_permission(self, request, view):
-        return request.user.is_authenticated and user_has_any_group(
-            request.user, ['HR Manager', 'IT Support']
+        user = request.user
+        role = getattr(user, "normalized_role", getattr(user, "role", None))
+        return bool(
+            user
+            and user.is_authenticated
+            and (
+                role in ["admin", "superadmin"]
+                or getattr(user, "is_staff", False)
+            )
         )
 
 
-# View decorators
-def require_group(group_name):
-    """Decorator to require specific group membership"""
-    def decorator(view_func):
-        @wraps(view_func)
-        def wrapped(request, *args, **kwargs):
-            if not request.user.is_authenticated:
-                return Response(
-                    {'detail': 'Authentication required'},
-                    status=status.HTTP_401_UNAUTHORIZED
-                )
-            
-            if not user_in_group(request.user, group_name):
-                return Response(
-                    {'detail': f'Access denied. Requires {group_name} role.'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            return view_func(request, *args, **kwargs)
-        return wrapped
-    return decorator
+class IsSuperAdmin(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and user.is_authenticated and getattr(user, "is_superuser", False))
 
 
-def require_any_group(*group_names):
-    """Decorator to require any of the specified groups"""
-    def decorator(view_func):
-        @wraps(view_func)
-        def wrapped(request, *args, **kwargs):
-            if not request.user.is_authenticated:
-                return Response(
-                    {'detail': 'Authentication required'},
-                    status=status.HTTP_401_UNAUTHORIZED
-                )
-            
-            if not user_has_any_group(request.user, group_names):
-                return Response(
-                    {'detail': f'Access denied. Requires one of: {", ".join(group_names)}'},
-                    status=status.HTTP_403_FORBIDDEN
-                )
-            
-            return view_func(request, *args, **kwargs)
-        return wrapped
-    return decorator
+class RolePermission(BasePermission):
+    """
+    Generic role-based permission. Use as RolePermission(required_roles=[...]).
+    Accepts role match (case-insensitive), or staff/superuser override.
+    """
+
+    def __init__(self, required_roles=None):
+        self.required_roles = required_roles or []
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not (user and user.is_authenticated):
+            return False
+
+        # Superuser/staff shortcut
+        if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
+            return True
+
+        normalized_role = getattr(user, "normalized_role", getattr(user, "role", None))
+        normalized_role_upper = normalized_role.upper() if normalized_role else None
+
+        required_upper = [r.upper() for r in self.required_roles]
+
+        if normalized_role_upper and normalized_role_upper in required_upper:
+            return True
+
+        # Fallback: check group names if present
+        try:
+            groups = [g.upper().replace(" ", "_") for g in user.groups.values_list("name", flat=True)]
+            return any(g in required_upper for g in groups)
+        except Exception:
+            return False

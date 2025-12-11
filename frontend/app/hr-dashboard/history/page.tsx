@@ -75,13 +75,17 @@ export default function ApplicantHistoryPage() {
     fetchHistory();
   }, [currentPage, pageSize, ordering]);
 
-  const fetchHistory = async () => {
-    setLoading(true);
+  // ====================================
+  // SAFE FETCH WITH CACHING + ABORT
+  // ====================================
+  const fetchHistory = async (showLoading = true) => {
+    const controller = new AbortController();
+    if (showLoading) setLoading(true);
+
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      // Build query params
       const params = new URLSearchParams();
       params.append("page", currentPage.toString());
       params.append("page_size", pageSize.toString());
@@ -98,28 +102,52 @@ export default function ApplicantHistoryPage() {
       if (scoreMax) params.append("score_max", scoreMax);
       if (hasInterview !== "all") params.append("has_interview", hasInterview);
 
-      const response = await axios.get(`${API_BASE_URL}/applicants/history/?${params.toString()}`, { headers });
+      const url = `${API_BASE_URL}/applicants/history/?${params.toString()}`;
+
+      const response = await axios.get(url, {
+        headers,
+        timeout: 15000,
+        signal: controller.signal,
+      });
+
       setData(response.data);
-    } catch (error: any) {
-      console.error("Error fetching history:", error);
-      if (error.response?.status === 401) {
-        setError("Authentication required. Redirecting to login...");
-        setTimeout(() => {
-          router.push("/hr-login");
-        }, 1500);
-      } else {
-        setError(error.response?.data?.detail || "Failed to load applicant history");
-      }
+
+      // cache for instant reload
+      sessionStorage.setItem(
+        "hr_history_cache",
+        JSON.stringify({
+          data: response.data,
+          timestamp: Date.now(),
+        })
+      );
+    } catch (err: any) {
+      if (axios.isCancel(err)) return;
+
+      console.error("Fetch error:", err);
+      setError(err.response?.data?.detail || "Failed to load applicant history");
     } finally {
-      setLoading(false);
+      if (showLoading) setLoading(false);
     }
+
+    return () => controller.abort();
   };
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCurrentPage(1);
-    fetchHistory();
-  };
+  // Load from cache instantly
+  useEffect(() => {
+    const cache = sessionStorage.getItem("hr_history_cache");
+    if (cache) {
+      try {
+        const parsed = JSON.parse(cache);
+        if (parsed?.data) {
+          setData(parsed.data);
+          setLoading(false);
+          fetchHistory(false);
+          return;
+        }
+      } catch {}
+    }
+    fetchHistory(true);
+  }, [currentPage, pageSize, ordering]);
 
   const handleResetFilters = () => {
     setSearch("");
@@ -198,6 +226,11 @@ export default function ApplicantHistoryPage() {
     a.download = `applicant-history-${new Date().toISOString().split("T")[0]}.csv`;
     a.click();
   };
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    setCurrentPage(1);
+    fetchHistory(true);
+  };
 
   if (loading && !data) {
     return (
@@ -205,6 +238,9 @@ export default function ApplicantHistoryPage() {
         <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-orange-600"></div>
       </div>
     );
+  }
+  if (!loading && !data) {
+    return <div className="text-center py-20 text-gray-500">No applicant history available.</div>;
   }
 
   return (

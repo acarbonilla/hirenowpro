@@ -29,6 +29,10 @@ opencv-python==4.10.0.84
 opencv-contrib-python==4.10.0.84
 pillow==11.0.0
 numpy==2.2.0
+ffmpeg-python==0.2.0
+
+# Speech-to-Text
+deepgram-sdk==3.7.2
 
 # Environment Management
 python-dotenv==1.0.1

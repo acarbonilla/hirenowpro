@@ -1,12 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import axios from "axios";
-import { getHRToken } from "@/lib/auth-hr";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+import { hrClient, getHRToken } from "@/lib/axios/hrClient";
 
 interface DashboardStats {
   total_applicants: number;
@@ -17,8 +13,19 @@ interface DashboardStats {
   avg_score: number;
 }
 
+interface RecentInterview {
+  id: number;
+  result_id?: number;
+  applicant?: any;
+  interview_status?: string;
+  passed?: boolean;
+  overall_score?: number;
+  created_at?: string;
+  hr_reviewed?: boolean;
+  has_result?: boolean;
+}
+
 export default function HRDashboardPage() {
-  const router = useRouter();
   const [stats, setStats] = useState<DashboardStats>({
     total_applicants: 0,
     total_interviews: 0,
@@ -27,38 +34,41 @@ export default function HRDashboardPage() {
     pass_rate: 0,
     avg_score: 0,
   });
+  const [recentInterviews, setRecentInterviews] = useState<RecentInterview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [recentInterviews, setRecentInterviews] = useState<any[]>([]);
 
   useEffect(() => {
+    const token = getHRToken();
+    if (!token) {
+      setError("Authentication required. Please log in again.");
+      setLoading(false);
+      return;
+    }
     fetchDashboardData();
   }, []);
 
   const fetchDashboardData = async () => {
+    setLoading(true);
+    setError("");
+
     try {
-      const token = getHRToken();
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const api = hrClient();
 
-      // Fetch results (primary data source)
-      const resultsRes = await axios.get(`${API_BASE_URL}/results/`, { headers });
+      const [resultsRes, interviewsRes, applicantsRes] = await Promise.all([
+        api.get("/results/"),
+        api.get("/interviews/"),
+        api.get("/applicants/"),
+      ]);
+
       const results = resultsRes.data.results || resultsRes.data;
-
-      // Fetch interviews
-      const interviewsRes = await axios.get(`${API_BASE_URL}/interviews/`, { headers });
       const interviews = interviewsRes.data.results || interviewsRes.data;
-
-      // Fetch applicants count
-      const applicantsRes = await axios.get(`${API_BASE_URL}/applicants/`, { headers });
       const applicants = applicantsRes.data.results || applicantsRes.data;
 
-      // Calculate stats
-      // Pending reviews = results that need manual review (score 50-60) OR haven't been reviewed yet
       const pendingReviews = Array.isArray(results)
         ? results.filter((r: any) => r.recommendation === "review" || !r.hr_reviewed_at).length
         : 0;
 
-      // Get today's date in local timezone
       const today = new Date();
       const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
       const completedToday = Array.isArray(results)
@@ -87,41 +97,30 @@ export default function HRDashboardPage() {
         avg_score: avgScore,
       });
 
-      // Get recent interviews (last 5) with their result IDs if available
       if (Array.isArray(interviews)) {
         const recent = interviews
           .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
           .slice(0, 5)
           .map((interview: any) => {
-            // Find matching result for this interview
             const result = Array.isArray(results) ? results.find((r: any) => r.interview === interview.id) : null;
 
             return {
-              id: interview.id, // Interview ID
-              result_id: result?.id, // Result ID (for review link)
+              id: interview.id,
+              result_id: result?.id,
               applicant: interview.applicant,
-              interview_status: interview.status, // Original interview status
+              interview_status: interview.status,
               passed: result?.passed,
               overall_score: result?.overall_score,
               has_result: !!result,
-              hr_reviewed: result?.hr_reviewed_at ? true : false,
+              hr_reviewed: !!result?.hr_reviewed_at,
               created_at: interview.created_at,
             };
           });
         setRecentInterviews(recent);
       }
-    } catch (error: any) {
-      console.error("Error fetching dashboard data:", error);
-
-      // Check if it's an authentication error
-      if (error.response?.status === 401) {
-        setError("Authentication required. Redirecting to login...");
-        setTimeout(() => {
-          router.push("/hr-login");
-        }, 1500);
-      } else {
-        setError(error.response?.data?.detail || "Failed to load dashboard data");
-      }
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || err.message || "Failed to load dashboard data";
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -140,10 +139,15 @@ export default function HRDashboardPage() {
       <div className="flex items-center justify-center h-96">
         <div className="bg-red-50 border border-red-200 rounded-lg p-6 max-w-md">
           <div className="flex items-center space-x-3 mb-3">
-            <span className="text-2xl">⚠️</span>
-            <h3 className="text-lg font-semibold text-red-900">Error</h3>
+            <h3 className="text-lg font-semibold text-red-900">Error Loading Dashboard</h3>
           </div>
-          <p className="text-red-700">{error}</p>
+          <p className="text-red-700 mb-4">{error}</p>
+          <button
+            onClick={() => fetchDashboardData()}
+            className="w-full bg-purple-600 text-white py-2 px-4 rounded-lg hover:bg-purple-700 transition-colors"
+          >
+            Retry
+          </button>
           {error.includes("Authentication") && <p className="text-sm text-red-600 mt-2">Please log in again.</p>}
         </div>
       </div>
@@ -151,39 +155,14 @@ export default function HRDashboardPage() {
   }
 
   const statCards = [
-    {
-      title: "Total Applicants",
-      value: stats.total_applicants,
-      icon: "👥",
-      color: "bg-blue-500",
-      link: "/hr-dashboard/applicants",
-    },
-    {
-      title: "Total Interviews",
-      value: stats.total_interviews,
-      icon: "🎥",
-      color: "bg-green-500",
-      link: "/hr-dashboard/results",
-    },
-    {
-      title: "Pending Reviews",
-      value: stats.pending_reviews,
-      icon: "⏳",
-      color: "bg-yellow-500",
-      link: "/hr-dashboard/results?status=pending",
-    },
-    {
-      title: "Completed Today",
-      value: stats.completed_today,
-      icon: "✅",
-      color: "bg-purple-500",
-      link: "/hr-dashboard/results",
-    },
+    { title: "Total Applicants", value: stats.total_applicants, color: "bg-blue-500", link: "/hr-dashboard/applicants" },
+    { title: "Total Interviews", value: stats.total_interviews, color: "bg-green-500", link: "/hr-dashboard/results" },
+    { title: "Pending Reviews", value: stats.pending_reviews, color: "bg-yellow-500", link: "/hr-dashboard/results?status=pending" },
+    { title: "Completed Today", value: stats.completed_today, color: "bg-purple-500", link: "/hr-dashboard/results" },
   ];
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Dashboard Overview</h1>
@@ -197,7 +176,6 @@ export default function HRDashboardPage() {
         </Link>
       </div>
 
-      {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {statCards.map((card, index) => (
           <Link
@@ -210,13 +188,12 @@ export default function HRDashboardPage() {
                 <p className="text-sm text-gray-600 font-medium">{card.title}</p>
                 <p className="text-3xl font-bold text-gray-900 mt-2">{card.value}</p>
               </div>
-              <div className={`${card.color} text-white text-3xl p-4 rounded-full`}>{card.icon}</div>
+              <div className={`${card.color} text-white text-3xl p-4 rounded-full`}>•</div>
             </div>
           </Link>
         ))}
       </div>
 
-      {/* Performance Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Performance Metrics</h3>
@@ -248,7 +225,6 @@ export default function HRDashboardPage() {
           </div>
         </div>
 
-        {/* Quick Actions */}
         <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Actions</h3>
           <div className="space-y-3">
@@ -256,7 +232,7 @@ export default function HRDashboardPage() {
               href="/hr-dashboard/results?status=pending"
               className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
             >
-              <span className="text-2xl">📋</span>
+              <span className="text-2xl">✓</span>
               <div>
                 <p className="font-medium text-gray-900">Review Pending Interviews</p>
                 <p className="text-sm text-gray-500">{stats.pending_reviews} waiting for review</p>
@@ -276,7 +252,7 @@ export default function HRDashboardPage() {
               href="/hr-dashboard/analytics"
               className="flex items-center space-x-3 p-3 rounded-lg hover:bg-gray-50 transition-colors"
             >
-              <span className="text-2xl">📈</span>
+              <span className="text-2xl">📊</span>
               <div>
                 <p className="font-medium text-gray-900">View Analytics</p>
                 <p className="text-sm text-gray-500">Detailed reports and insights</p>
@@ -286,12 +262,11 @@ export default function HRDashboardPage() {
         </div>
       </div>
 
-      {/* Recent Interviews */}
       <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900">Recent Interviews</h3>
           <Link href="/hr-dashboard/interviews" className="text-sm text-purple-600 hover:text-purple-700 font-medium">
-            View All →
+            View All
           </Link>
         </div>
         {recentInterviews.length > 0 ? (
@@ -328,7 +303,7 @@ export default function HRDashboardPage() {
                             interview.passed ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
                           }`}
                         >
-                          {interview.passed ? "✓ Passed" : "✗ Failed"}
+                          {interview.passed ? "Passed" : "Failed"}
                         </span>
                       ) : (
                         <span
@@ -347,7 +322,7 @@ export default function HRDashboardPage() {
                       )}
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(interview.created_at).toLocaleDateString()}
+                      {interview.created_at ? new Date(interview.created_at).toLocaleDateString() : "—"}
                     </td>
                     <td className="px-4 py-4 whitespace-nowrap text-sm">
                       {interview.result_id ? (
