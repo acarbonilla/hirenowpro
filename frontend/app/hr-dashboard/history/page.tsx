@@ -240,7 +240,7 @@ export default function ApplicantHistoryPage() {
     );
   }
   if (!loading && !data) {
-    return <div className="text-center py-20 text-gray-500">No applicant history available.</div>;
+    return <div className="text-center py-20 text-gray-500">No interview records available.</div>;
   }
 
   return (
@@ -250,7 +250,7 @@ export default function ApplicantHistoryPage() {
         <div>
           <h1 className="text-3xl font-bold text-gray-900 flex items-center space-x-3">
             <span className="text-4xl">📚</span>
-            <span>Applicant History</span>
+            <span>Interview Records</span>
           </h1>
           <p className="text-gray-600 mt-1">Complete tracking and records of all applicants</p>
         </div>

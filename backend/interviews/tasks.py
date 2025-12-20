@@ -6,6 +6,7 @@ from celery import shared_task, group
 from django.utils import timezone
 from django.db import transaction
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +33,23 @@ def process_complete_interview(self, interview_id):
     from interviews.ai_service import get_ai_service
     from interviews.ai import detect_script_reading
     
+    monotonic_start = time.monotonic()
+    interview = None
+    queue_entry = None
+
     try:
-        logger.info(f"Starting bulk processing for interview {interview_id}")
-        
         interview = Interview.objects.get(id=interview_id)
-        
+    except Interview.DoesNotExist:
+        logger.error(f"Interview {interview_id} not found")
+        raise
+
+    try:
+        logger.info(f"AI analysis started for interview {interview_id}")
+
+        # Guard against duplicate processing runs
+        if interview.status in ['processing', 'completed']:
+            logger.info(f"Interview {interview_id} already in status '{interview.status}', continuing with processing run.")
+
         # Get processing queue entry
         try:
             queue_entry = ProcessingQueue.objects.filter(
@@ -46,14 +59,14 @@ def process_complete_interview(self, interview_id):
             
             queue_entry.status = 'processing'
             queue_entry.started_at = timezone.now()
-            queue_entry.save()
+            queue_entry.save(update_fields=['status', 'started_at'])
         except ProcessingQueue.DoesNotExist:
             logger.warning(f"No processing queue found for interview {interview_id}")
             queue_entry = None
         
         # Update interview status
         interview.status = 'processing'
-        interview.save()
+        interview.save(update_fields=['status'])
         
         # Get all video responses
         video_responses = list(interview.video_responses.all())
@@ -124,19 +137,21 @@ def process_complete_interview(self, interview_id):
                         logger.warning(f"Video {video_response.id} has no transcript (technical issue)")
                     else:
                         # Save AI analysis
-                        AIAnalysis.objects.create(
+                        AIAnalysis.objects.update_or_create(
                             video_response=video_response,
-                            transcript_text=video_response.transcript,  # Already stored from upload
-                            sentiment_score=analysis_result.get('sentiment_score', 50.0),
-                            confidence_score=analysis_result.get('confidence_score', 50.0),
-                            speech_clarity_score=analysis_result.get('speech_clarity_score', 50.0),
-                            content_relevance_score=analysis_result.get('content_relevance_score', 50.0),
-                            overall_score=analysis_result.get('overall_score', 50.0),
-                            recommendation=analysis_result.get('recommendation', 'review'),
-                            body_language_analysis={},
-                            langchain_analysis_data={
-                                'analysis_summary': analysis_result.get('analysis_summary', ''),
-                                'raw_scores': analysis_result
+                            defaults={
+                                'transcript_text': video_response.transcript,  # Already stored from upload
+                                'sentiment_score': analysis_result.get('sentiment_score', 50.0),
+                                'confidence_score': analysis_result.get('confidence_score', 50.0),
+                                'speech_clarity_score': analysis_result.get('speech_clarity_score', 50.0),
+                                'content_relevance_score': analysis_result.get('content_relevance_score', 50.0),
+                                'overall_score': analysis_result.get('overall_score', 50.0),
+                                'recommendation': analysis_result.get('recommendation', 'review'),
+                                'body_language_analysis': {},
+                                'langchain_analysis_data': {
+                                    'analysis_summary': analysis_result.get('analysis_summary', ''),
+                                    'raw_scores': analysis_result
+                                }
                             }
                         )
                         
@@ -171,19 +186,23 @@ def process_complete_interview(self, interview_id):
         # Update interview status
         interview.status = 'completed'
         interview.completed_at = timezone.now()
-        interview.save()
+        interview.save(update_fields=['status', 'completed_at'])
         
         # Update queue
         if queue_entry:
             queue_entry.status = 'completed'
             queue_entry.completed_at = timezone.now()
-            queue_entry.save()
+            queue_entry.save(update_fields=['status', 'completed_at'])
         
         # Send notification (async)
-        from notifications.tasks import send_result_notification
-        send_result_notification.delay(interview_id)
+        try:
+            from notifications.tasks import send_result_notification
+            send_result_notification.delay(interview_id)
+        except Exception:
+            logger.exception("Failed to queue notification for interview %s", interview_id)
         
-        logger.info(f"Bulk processing complete for interview {interview_id}")
+        elapsed_ms = int((time.monotonic() - monotonic_start) * 1000)
+        logger.info(f"AI analysis complete for interview {interview_id} in {elapsed_ms}ms")
         
         return {
             'status': 'success',
@@ -191,27 +210,33 @@ def process_complete_interview(self, interview_id):
             'videos_processed': len(video_responses)
         }
         
-    except Interview.DoesNotExist:
-        logger.error(f"Interview {interview_id} not found")
-        raise
-        
     except Exception as e:
         logger.error(f"Error processing interview {interview_id}: {str(e)}", exc_info=True)
         
         # Update queue status
-        try:
-            if queue_entry:
+        if queue_entry:
+            try:
                 queue_entry.status = 'failed'
                 queue_entry.error_message = str(e)
-                queue_entry.save()
-            
-            interview.status = 'failed'
-            interview.save()
-        except:
-            pass
+                queue_entry.completed_at = timezone.now()
+                queue_entry.save(update_fields=['status', 'error_message', 'completed_at'])
+            except Exception:
+                logger.exception("Failed to update queue entry for interview %s", interview_id)
         
-        # Retry the task
+        # Update interview status
+        if interview:
+            try:
+                interview.status = 'failed'
+                interview.completed_at = timezone.now()
+                interview.save(update_fields=['status', 'completed_at'])
+            except Exception:
+                logger.exception("Failed to update interview %s status to failed", interview_id)
+        
+        # Retry the task (let Celery mark as failed if retries exhausted)
         raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
+
+# Single public entry point for background analysis
+analyze_interview = process_complete_interview
 
 
 @shared_task(bind=True, max_retries=3)
@@ -279,18 +304,20 @@ def analyze_single_video(self, video_response_id):
             video_response.processed = True  # Backward compatibility
             video_response.save()
             
-            # Create detailed AI Analysis record
-            AIAnalysis.objects.create(
+            # Create or update detailed AI Analysis record (idempotent)
+            AIAnalysis.objects.update_or_create(
                 video_response=video_response,
-                transcript_text=transcript,
-                sentiment_score=analysis_result.get('sentiment_score', 50.0),
-                confidence_score=analysis_result.get('confidence_score', 50.0),
-                speech_clarity_score=analysis_result.get('speech_clarity_score', 50.0),
-                content_relevance_score=analysis_result.get('content_relevance_score', 50.0),
-                overall_score=analysis_result.get('overall_score', 50.0),
-                recommendation=analysis_result.get('recommendation', 'review'),
-                body_language_analysis={},  # Not implemented yet
-                langchain_analysis_data=analysis_result
+                defaults={
+                    'transcript_text': transcript,
+                    'sentiment_score': analysis_result.get('sentiment_score', 50.0),
+                    'confidence_score': analysis_result.get('confidence_score', 50.0),
+                    'speech_clarity_score': analysis_result.get('speech_clarity_score', 50.0),
+                    'content_relevance_score': analysis_result.get('content_relevance_score', 50.0),
+                    'overall_score': analysis_result.get('overall_score', 50.0),
+                    'recommendation': analysis_result.get('recommendation', 'review'),
+                    'body_language_analysis': {},  # Not implemented yet
+                    'langchain_analysis_data': analysis_result,
+                }
             )
         
         logger.info(f"Video response {video_response_id} analyzed successfully")

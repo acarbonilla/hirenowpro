@@ -1,21 +1,21 @@
 from django.urls import path
+from rest_framework.routers import DefaultRouter
 from .views import (
     PublicInterviewCreateView,
-    PublicInterviewRetrieveView,
-    PublicQuestionListView,
+    PublicInterviewViewSet,
     PublicPositionTypeLookupView,
     PublicPositionTypeView,
     PublicPositionTypeViewSet,
+    PublicJobPositionViewSet,
 )
-from rest_framework.routers import DefaultRouter
 
 router = DefaultRouter()
 router.register(r'position-types', PublicPositionTypeViewSet, basename='public-position-types')
+router.register(r'positions', PublicJobPositionViewSet, basename='public-positions')
+router.register(r'interviews', PublicInterviewViewSet, basename='public-interviews')
 
 urlpatterns = [
     path("interviews/", PublicInterviewCreateView.as_view(), name="public-interview-create"),
-    path("interviews/<int:pk>/", PublicInterviewRetrieveView.as_view(), name="public-interview-retrieve"),
-    path("interviews/<int:pk>/questions/", PublicQuestionListView.as_view(), name="public-interview-questions"),
     path("position-types/", PublicPositionTypeView.as_view(), name="public-position-types"),
 ]
 

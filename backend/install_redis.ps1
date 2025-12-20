@@ -41,7 +41,7 @@ try {
             Write-Host "1. Open a NEW terminal" -ForegroundColor White
             Write-Host "2. Run: cd backend" -ForegroundColor White
             Write-Host "3. Run: & .\venv\Scripts\Activate.ps1" -ForegroundColor White
-            Write-Host "4. Run: celery -A core worker --loglevel=info --pool=solo" -ForegroundColor White
+            Write-Host "4. Run: python -m celery -A core.celery worker -l info -P solo" -ForegroundColor White
             Write-Host "`n5. Keep that terminal open!" -ForegroundColor Yellow
             Write-Host "6. Start Django in another terminal: python manage.py runserver" -ForegroundColor White
             Write-Host "7. Test interview submission - should return in 1-2 seconds!" -ForegroundColor Green

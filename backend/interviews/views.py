@@ -2,11 +2,15 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from accounts.permissions import IsHR, ApplicantOrHR
+from accounts.permissions import IsApplicant
+from common.permissions import IsHRUser
 from rest_framework.settings import api_settings
-from accounts.authentication import ApplicantTokenAuthentication
+from accounts.authentication import ApplicantTokenAuthentication, HRTokenAuthentication
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
+from django.utils import timezone
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.exceptions import ValidationError
+from datetime import timedelta
 
 from .models import Interview, InterviewQuestion, VideoResponse, JobPosition
 from .type_models import PositionType, QuestionType
@@ -18,10 +22,13 @@ from .serializers import (
     VideoResponseCreateSerializer,
     InterviewAnalysisSerializer,
     InterviewQuestionSerializer,
-    JobPositionSerializer
+    InterviewQuestionWriteSerializer,
+    JobPositionSerializer,
+    HRDecisionSerializer,
 )
 from .type_serializers import JobCategorySerializer, QuestionTypeSerializer
 from .type_serializers import JobCategorySerializer as PositionTypeSerializer
+from .question_selection import select_questions_for_interview
 
 
 class JobCategoryViewSet(viewsets.ModelViewSet):
@@ -31,7 +38,8 @@ class JobCategoryViewSet(viewsets.ModelViewSet):
 
     queryset = PositionType.objects.all().order_by('order', 'name')
     serializer_class = JobCategorySerializer
-    permission_classes = [IsAuthenticated, IsHR]
+    permission_classes = [IsAuthenticated, IsHRUser]
+
 
     def get_permissions(self):
         """
@@ -51,7 +59,7 @@ class JobCategoryViewSet(viewsets.ModelViewSet):
                     or user.has_perm("interviews.manage_job_categories")
                 )
 
-        return [ManageJobCategoriesPermission()]
+        return [IsAuthenticated(), IsHRUser(), ManageJobCategoriesPermission()]
 
     def get_queryset(self):
         """Filter to active types only if requested"""
@@ -69,22 +77,47 @@ class JobCategoryViewSet(viewsets.ModelViewSet):
 
 class JobPositionViewSet(viewsets.ModelViewSet):
     """
-    ViewSet for Job Positions
+    ViewSet for Job Positions (HR-only for write operations)
     """
 
-    queryset = JobPosition.objects.all()
+    queryset = JobPosition.objects.all().select_related("category").prefetch_related("offices")
     serializer_class = JobPositionSerializer
+    permission_classes = [IsAuthenticated, IsHRUser]
+    authentication_classes = [HRTokenAuthentication, *api_settings.DEFAULT_AUTHENTICATION_CLASSES]
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
-            return [AllowAny()]
-        return [IsAuthenticated()]
+        """
+        Allow authenticated HR users to read; restrict writes to staff/superusers or users
+        with job position permissions.
+        """
+
+        class ManageJobPositionsPermission(IsAuthenticated):
+            def has_permission(self_inner, request, view):
+                if not super().has_permission(request, view):
+                    return False
+                if request.method in ["GET", "HEAD", "OPTIONS"]:
+                    return True
+                user = request.user
+                return bool(
+                    getattr(user, "is_superuser", False)
+                    or getattr(user, "is_staff", False)
+                    or user.has_perm("interviews.add_jobposition")
+                    or user.has_perm("interviews.change_jobposition")
+                    or user.has_perm("interviews.delete_jobposition")
+                )
+
+        return [IsAuthenticated(), IsHRUser(), ManageJobPositionsPermission()]
 
     def get_queryset(self):
         qs = super().get_queryset()
-        if self.action in ['list', 'retrieve'] and not self.request.user.is_authenticated:
-            qs = qs.filter(is_active=True)
-        return qs
+        if self.request:
+            code = self.request.query_params.get("code")
+            active_only = self.request.query_params.get("active_only", "false").lower() == "true"
+            if code:
+                qs = qs.filter(code=code)
+            if active_only:
+                qs = qs.filter(is_active=True)
+        return qs.order_by("-created_at")
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -104,7 +137,7 @@ class QuestionTypeViewSet(viewsets.ModelViewSet):
     
     queryset = QuestionType.objects.all().order_by('order', 'name')
     serializer_class = QuestionTypeSerializer
-    permission_classes = [IsAuthenticated, IsHR]
+    permission_classes = [IsAuthenticated, IsHRUser]
     
     def get_queryset(self):
         """Filter to active types only if requested"""
@@ -122,7 +155,8 @@ class PositionTypeViewSet(viewsets.ReadOnlyModelViewSet):
 
     queryset = PositionType.objects.all()
     serializer_class = PositionTypeSerializer
-    permission_classes = [AllowAny()]
+    permission_classes = [IsAuthenticated, IsHRUser]
+    authentication_classes = [HRTokenAuthentication, *api_settings.DEFAULT_AUTHENTICATION_CLASSES]
 
     def get_queryset(self):
         qs = super().get_queryset()
@@ -133,6 +167,33 @@ class PositionTypeViewSet(viewsets.ReadOnlyModelViewSet):
         if position_code:
             qs = qs.filter(positions__code=position_code)
         return qs
+
+
+class ApplicantInterviewViewSet(viewsets.ModelViewSet):
+    """
+    Applicant-facing interview viewset. Requires applicant token and restricts to own interviews.
+    """
+
+    serializer_class = InterviewSerializer
+    authentication_classes = [ApplicantTokenAuthentication]
+    permission_classes = [IsApplicant]
+    queryset = Interview.objects.select_related("applicant", "position_type").prefetch_related("video_responses")
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        user = getattr(self.request, "user", None)
+        if user and hasattr(user, "id"):
+            qs = qs.filter(applicant_id=user.id)
+        return qs
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return InterviewCreateSerializer
+        return super().get_serializer_class()
+
+    def perform_create(self, serializer):
+        applicant = getattr(self.request, "user", None)
+        serializer.save(applicant=applicant)
 
 
 class InterviewQuestionViewSet(viewsets.ModelViewSet):
@@ -158,6 +219,11 @@ class InterviewQuestionViewSet(viewsets.ModelViewSet):
             return [AllowAny()]
         return [IsAuthenticated()]
     
+    def get_serializer_class(self):
+        if self.action in ["create", "update", "partial_update"]:
+            return InterviewQuestionWriteSerializer
+        return InterviewQuestionSerializer
+
     def get_queryset(self):
         """Filter questions based on query parameters"""
         queryset = super().get_queryset()
@@ -189,6 +255,43 @@ class InterviewQuestionViewSet(viewsets.ModelViewSet):
         
         return queryset
 
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        if not serializer.is_valid():
+            print("QUESTION CREATE ERRORS:", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        question = serializer.save()
+        read_serializer = InterviewQuestionSerializer(question)
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        if not serializer.is_valid():
+            print("QUESTION UPDATE ERRORS:", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        question = serializer.save()
+        read_serializer = InterviewQuestionSerializer(question)
+        return Response(read_serializer.data)
+
+
+class HRInterviewPagination(PageNumberPagination):
+    page_size = 20
+    page_size_query_param = "page_size"
+    max_page_size = 50
+    allowed_sizes = {10, 20, 50}
+
+    def get_page_size(self, request):
+        size = super().get_page_size(request)
+        if size is None:
+            return self.page_size
+        if size > self.max_page_size:
+            raise ValidationError("page_size cannot exceed 50.")
+        if size not in self.allowed_sizes:
+            return self.page_size
+        return size
+
 
 class InterviewViewSet(viewsets.ModelViewSet):
     """
@@ -203,6 +306,7 @@ class InterviewViewSet(viewsets.ModelViewSet):
     """
     
     queryset = Interview.objects.all()
+    pagination_class = HRInterviewPagination
     
     def get_serializer_class(self):
         if self.action == "create":
@@ -214,23 +318,40 @@ class InterviewViewSet(viewsets.ModelViewSet):
         return InterviewSerializer
 
     
-    authentication_classes = [ApplicantTokenAuthentication, *api_settings.DEFAULT_AUTHENTICATION_CLASSES]
-
-    def get_permissions(self):
-        """Allow anyone to create/interact; restrict listing to HR; allow applicant or HR for interview detail/submit paths"""
-        if self.action in ['list']:
-            return [IsAuthenticated(), IsHR()]
-        if self.action in ['retrieve', 'submit', 'analysis', 'video_response', 'complete']:
-            return [ApplicantOrHR()]
-        if self.action in ['create']:
-            return [AllowAny()]
-        return super().get_permissions()
+    authentication_classes = [HRTokenAuthentication, *api_settings.DEFAULT_AUTHENTICATION_CLASSES]
+    permission_classes = [IsAuthenticated, IsHRUser]
     
     def get_queryset(self):
         qs = Interview.objects.all()
 
         if self.action == "list":
-            return qs.select_related("applicant", "position_type").order_by("-created_at")
+            qs = qs.select_related("applicant", "position_type").order_by("-created_at")
+
+            status_param = (self.request.query_params.get("status") or "").lower()
+            status_map = {
+                "passed": "completed",  # treat completed interviews as passed for list filtering
+                "failed": "failed",
+                "processing": "processing",
+                "submitted": "submitted",
+            }
+            if status_param in status_map:
+                qs = qs.filter(status=status_map[status_param])
+
+            range_param = (self.request.query_params.get("range") or "").lower()
+            now = timezone.now()
+            if range_param == "today":
+                start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+                qs = qs.filter(created_at__gte=start)
+            elif range_param == "week":
+                start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+                qs = qs.filter(created_at__gte=start)
+            elif range_param == "month":
+                start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                qs = qs.filter(created_at__gte=start)
+            # NOTE: Do not allow arbitrary date ranges to avoid unbounded scans.
+            # This list view must stay lightweight; do not add prefetch_related or heavy joins here.
+
+            return qs
 
         return qs.select_related("applicant", "position_type") \
                 .prefetch_related("video_responses") \
@@ -247,37 +368,11 @@ class InterviewViewSet(viewsets.ModelViewSet):
         interview = serializer.save()
         print("DEBUG_INTERVIEW_CREATED:", interview.id, interview.position_type_id)
 
-        # Attach category-based questions using job category derived from position_type
         if interview.position_type_id:
-            subroles = getattr(interview, "_job_position_subroles", None)
-            # Attempt to derive job position from request if not already set
-            if subroles is None:
-                job_position_id = request.data.get("job_position_id") or request.data.get("job_position")
-                if job_position_id:
-                    try:
-                        job_position = JobPosition.objects.get(id=job_position_id)
-                        subroles = job_position.subroles or []
-                        setattr(interview, "_job_position_subroles", subroles)
-                    except JobPosition.DoesNotExist:
-                        subroles = None
-
-            base_qs = InterviewQuestion.objects.filter(
-                is_active=True,
-                category_id=interview.position_type_id
-            ).order_by('order')
-            selected_questions = base_qs
-            if subroles:
-                q = Q()
-                for tag in subroles:
-                    q |= Q(tags__contains=[tag])
-                if q:
-                    refined = base_qs.filter(q)
-                    if refined.exists():
-                        selected_questions = refined
-
+            selected_questions = select_questions_for_interview(interview)
             if hasattr(interview, "questions"):
                 interview.questions.set(selected_questions)
-        
+
         # Return full interview data with questions
         response_serializer = InterviewSerializer(interview)
         return Response(
@@ -288,7 +383,7 @@ class InterviewViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED
         )
     
-    @action(detail=True, methods=['post'], url_path='video-response', permission_classes=[AllowAny])
+    @action(detail=True, methods=['post'], url_path='video-response', permission_classes=[IsAuthenticated, IsHRUser], authentication_classes=[HRTokenAuthentication, *api_settings.DEFAULT_AUTHENTICATION_CLASSES])
     def video_response(self, request, pk=None):
         """
         Upload video response WITHOUT immediate analysis
@@ -339,6 +434,12 @@ class InterviewViewSet(viewsets.ModelViewSet):
             )
         
         question = get_object_or_404(InterviewQuestion, id=question_id, is_active=True)
+
+        if question.position_type_id != interview.position_type_id:
+            return Response(
+                {'error': 'Invalid question for this position.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         
         # Check if response already exists for this question
         existing_response = VideoResponse.objects.filter(
@@ -399,7 +500,7 @@ class InterviewViewSet(viewsets.ModelViewSet):
             status=status.HTTP_201_CREATED
         )
     
-    @action(detail=True, methods=['get'], url_path='analysis', permission_classes=[AllowAny])
+    @action(detail=True, methods=['get'], url_path='analysis', permission_classes=[IsAuthenticated, IsHRUser], authentication_classes=[HRTokenAuthentication, *api_settings.DEFAULT_AUTHENTICATION_CLASSES])
     def analysis(self, request, pk=None):
         """
         Get AI analysis results for interview
@@ -433,6 +534,90 @@ class InterviewViewSet(viewsets.ModelViewSet):
                 'videos_with_ai_analysis': videos_with_ai
             }
         })
+
+    @action(detail=True, methods=['post'], url_path='decision')
+    def decision(self, request, pk=None):
+        """
+        HR records final interview decision.
+
+        POST /api/hr/interviews/{id}/decision/
+        Body: {
+            "decision": "hire" | "reject" | "hold",
+            "hr_comment": "required for hold",
+            "hold_until": "required for hold",
+            "reopen_review": optional boolean
+        }
+        """
+        interview = self.get_object()
+        result = getattr(interview, "result", None)
+        if result is None:
+            return Response(
+                {"detail": "Interview result not found for decision update."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        reopen_review = bool(request.data.get("reopen_review"))
+        if result.hr_decision and not reopen_review:
+            return Response(
+                {"detail": "HR decision already recorded. Provide reopen_review to update."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        serializer = HRDecisionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        decision = serializer.validated_data["decision"]
+        hr_comment = (serializer.validated_data.get("hr_comment") or "").strip()
+        hold_until = serializer.validated_data.get("hold_until")
+
+        interview.hr_decision = decision
+        interview.hr_decision_reason = hr_comment
+        interview.hr_decision_by = request.user
+        interview.hr_decision_at = timezone.now()
+        if decision == "hire":
+            interview.status = "completed"
+            interview.completed_at = interview.completed_at or timezone.now()
+        elif decision == "reject":
+            interview.status = "failed"
+            interview.completed_at = interview.completed_at or timezone.now()
+        interview.save()
+
+        result.hr_decision = decision
+        result.hr_comment = hr_comment
+        result.hold_until = hold_until if decision == "hold" else None
+        result.hr_decision_at = timezone.now()
+        if decision in {"hire", "reject"}:
+            result.final_decision = "hired" if decision == "hire" else "rejected"
+            result.final_decision_date = timezone.now()
+            result.final_decision_by = request.user
+            result.final_decision_notes = hr_comment
+            result.passed = decision == "hire"
+        result.save()
+
+        applicant = interview.applicant
+        if decision == "hire":
+            applicant.status = "hired"
+            applicant.reapplication_date = None
+        elif decision == "reject":
+            applicant.status = "failed"
+        elif decision == "hold":
+            applicant.status = "in_review"
+        applicant.save()
+
+        return Response(
+            {
+                "message": f"HR decision recorded: {decision}",
+                "interview_id": interview.id,
+                "hr_decision": result.hr_decision,
+                "hr_comment": result.hr_comment,
+                "hold_until": result.hold_until,
+                "hr_decision_at": result.hr_decision_at,
+                "interview_status": interview.status,
+                "applicant_id": applicant.id,
+                "applicant_status": applicant.status,
+                "result_id": result.id,
+                "result_final_decision": result.final_decision,
+            }
+        )
     
     @action(detail=True, methods=['post'], url_path='submit')
     def submit(self, request, pk=None):
@@ -521,198 +706,19 @@ class InterviewViewSet(viewsets.ModelViewSet):
             status='pending'
         )
         
-        # Try async processing first (Redis/Celery), fall back to background thread
-        processing_started = False
-        try:
-            from .tasks import process_complete_interview
-            from django.db import transaction
-            
-            # Queue task after transaction commits to ensure DB consistency
-            def queue_celery_task():
-                process_complete_interview.delay(interview.id)
-                print(f"✓ Celery task queued for interview {interview.id}")
-            
-            transaction.on_commit(queue_celery_task)
-            processing_started = True
-            print(f"✓ Celery task scheduled to queue after commit")
-        except Exception as e:
-            print(f"⚠ Redis/Celery not available, starting background thread: {e}")
-            
-            # Process in background thread (non-blocking - returns immediately)
-            import threading
-            def process_in_background():
-                try:
-                    from .ai_service import get_ai_service
-                    from .deepgram_service import get_deepgram_service
-                    from .models import AIAnalysis
-                    print(f"Starting LLM batch analysis for interview {interview.id}...")
-                    
-                    interview.status = 'processing'
-                    interview.save()
-                    
-                    ai_service = get_ai_service()
-                    deepgram_service = get_deepgram_service()
-                    video_responses = list(interview.video_responses.all())
-                    
-                    # Check if transcripts are already available (from upload step)
-                    videos_needing_transcription = [vr for vr in video_responses if not vr.transcript]
-                    
-                    # Transcribe any videos that don't have transcripts yet (fallback)
-                    if videos_needing_transcription:
-                        print(f"⚠️ Found {len(videos_needing_transcription)} videos without transcripts, transcribing now...")
-                        for vr in videos_needing_transcription:
-                            try:
-                                transcript_data = deepgram_service.transcribe_video(
-                                    vr.video_file_path.path,
-                                    video_response_id=vr.id
-                                )
-                                vr.transcript = transcript_data['transcript']
-                                vr.save()
-                                print(f"✓ Transcribed video {vr.id}")
-                            except Exception as trans_error:
-                                print(f"❌ Failed to transcribe video {vr.id}: {trans_error}")
-                                vr.transcript = ""
-                                vr.save()
-                    
-                    # Prepare data for BATCH LLM ANALYSIS (transcripts already stored)
-                    transcripts_data = [
-                        {
-                            'video_id': vr.id,
-                            'transcript': vr.transcript,
-                            'question_text': vr.question.question_text,
-                            'question_type': vr.question.question_type.name if vr.question.question_type else 'general'
-                        }
-                        for vr in video_responses
-                    ]
-                    
-                    # Analyze all transcripts in ONE API call (no more transcription!)
-                    print(f"📊 Running batch LLM analysis for {len(transcripts_data)} transcripts...")
-                    analyses = ai_service.batch_analyze_transcripts(transcripts_data, interview_id=interview.id)
-                    
-                    # Save LLM analysis results to database
-                    for video_response, analysis_result in zip(video_responses, analyses):
-                        try:
-                            # Check if transcript is empty (technical issue)
-                            if not video_response.transcript or len(video_response.transcript.strip()) == 0:
-                                # For technical issues, don't create AI analysis
-                                video_response.ai_score = None
-                                video_response.sentiment = None
-                                video_response.processed = True
-                                video_response.status = 'analyzed'
-                                video_response.save()
-                                print(f"⚠️ Video {video_response.id} has no transcript (technical issue)")
-                            else:
-                                # Normal processing with LLM analysis
-                                # Save AI analysis
-                                AIAnalysis.objects.create(
-                                    video_response=video_response,
-                                    transcript_text=video_response.transcript,  # Already stored from upload
-                                    sentiment_score=analysis_result.get('sentiment_score', 50.0),
-                                    confidence_score=analysis_result.get('confidence_score', 50.0),
-                                    speech_clarity_score=analysis_result.get('speech_clarity_score', 50.0),
-                                    content_relevance_score=analysis_result.get('content_relevance_score', 50.0),
-                                    overall_score=analysis_result.get('overall_score', 50.0),
-                                    recommendation=analysis_result.get('recommendation', 'review'),
-                                    body_language_analysis={},
-                                    langchain_analysis_data={
-                                        'analysis_summary': analysis_result.get('analysis_summary', ''),
-                                        'raw_scores': analysis_result
-                                    }
-                                )
-                                
-                                # Update video_response with scores
-                                video_response.ai_score = analysis_result.get('overall_score', 50.0)
-                                video_response.sentiment = analysis_result.get('sentiment_score', 50.0)
-                                video_response.processed = True
-                                video_response.status = 'analyzed'
-                                video_response.save()
-                                print(f"✓ Saved LLM analysis for video {video_response.id}")
-                        except Exception as save_error:
-                            print(f"✗ Failed to save analysis for video {video_response.id}: {save_error}")
-                    
-                    interview.status = 'completed'
-                    interview.completed_at = timezone.now()
-                    interview.save()
-                    
-                    # Auto-create InterviewResult after interview completion
-                    from results.models import InterviewResult
-                    from django.db.models import Avg
-                    
-                    # Calculate average score from all video responses
-                    avg_score = interview.video_responses.aggregate(avg=Avg('ai_score'))['avg']
-                    
-                    if avg_score is not None:
-                        # Determine if passed based on dynamic scoring thresholds from SystemSettings
-                        from results.models import SystemSettings
-                        passing_threshold = SystemSettings.get_passing_threshold()
-                        passed = avg_score >= passing_threshold
-                        
-                        # Create result record
-                        result, created = InterviewResult.objects.get_or_create(
-                            interview=interview,
-                            defaults={
-                                'applicant': interview.applicant,
-                                'final_score': round(avg_score, 2),
-                                'passed': passed
-                            }
-                        )
-                        if created:
-                            print(f"✓ Created InterviewResult {result.id} with score {result.final_score}")
-                        else:
-                            # Update existing result
-                            result.final_score = round(avg_score, 2)
-                            result.passed = passed
-                            result.save()
-                            print(f"✓ Updated InterviewResult {result.id} with score {result.final_score}")
-                        
-                        # Update applicant status based on score
-                        applicant = interview.applicant
-                        if avg_score < 50:
-                            # Failed: score below 50
-                            applicant.status = 'failed'
-                            applicant.save()
-                            print(f"✓ Updated applicant {applicant.id} status to 'failed' (score: {avg_score})")
-                        elif avg_score >= passing_threshold:
-                            # Passed: score at or above passing threshold
-                            applicant.status = 'passed'
-                            applicant.save()
-                            print(f"✓ Updated applicant {applicant.id} status to 'passed' (score: {avg_score})")
-                        else:
-                            # In review: score 50-74.9
-                            applicant.status = 'in_review'
-                            applicant.save()
-                            print(f"✓ Updated applicant {applicant.id} status to 'in_review' (score: {avg_score})")
-                    
-                    queue_entry.status = 'completed'
-                    queue_entry.save()
-                    
-                    print(f"✓ Interview {interview.id} processed successfully!")
-                except Exception as process_error:
-                    import traceback
-                    error_msg = f"{str(process_error)}\n{traceback.format_exc()}"
-                    print(f"✗ Error processing interview {interview.id}: {error_msg}")
-                    interview.status = 'failed'
-                    interview.error_message = error_msg
-                    interview.save()
-                    queue_entry.status = 'failed'
-                    queue_entry.error_message = error_msg
-                    queue_entry.save()
-            
-            # Start processing in background thread AFTER transaction commits
-            # This ensures the response returns immediately
-            from django.db import transaction
-            
-            def start_background_thread():
-                thread = threading.Thread(target=process_in_background)
-                thread.daemon = True
-                thread.start()
-                print(f"✓ Background processing thread started for interview {interview.id}")
-            
-            transaction.on_commit(start_background_thread)
-            processing_started = True
-            print(f"✓ Background thread scheduled to start after commit")
         
-        # Return immediately - processing happens in background
+        try:
+            from .tasks import analyze_interview
+            from django.db import transaction
+
+            def queue_celery_task():
+                analyze_interview.delay(interview.id)
+                print(f"Celery task queued for interview {interview.id}")
+
+            transaction.on_commit(queue_celery_task)
+        except Exception as e:
+            print(f"Non-fatal: failed to queue analysis task for interview {interview.id}: {e}")
+
         return Response({
             'message': 'Interview submitted successfully. AI analysis in progress.',
             'queue_id': queue_entry.id,

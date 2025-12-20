@@ -13,14 +13,46 @@ class InterviewResult(models.Model):
         ('hired', 'Hired'),
         ('rejected', 'Rejected'),
     ]
+    HR_DECISION_CHOICES = [
+        ('hire', 'Hire'),
+        ('reject', 'Reject'),
+        ('hold', 'Hold'),
+    ]
     
     interview = models.OneToOneField(Interview, on_delete=models.CASCADE, related_name='result')
     applicant = models.ForeignKey(Applicant, on_delete=models.CASCADE, related_name='results')
+    applicant_display_name = models.CharField(max_length=255, blank=True, help_text="Denormalized applicant name for summary views")
     final_score = models.FloatField(help_text="Final aggregated score")
     passed = models.BooleanField(default=False)
     result_date = models.DateTimeField(auto_now_add=True)
     
     # HR Review and Final Decision fields
+    hr_decision = models.CharField(
+        max_length=20,
+        choices=HR_DECISION_CHOICES,
+        null=True,
+        blank=True,
+        help_text="Explicit HR decision for this interview"
+    )
+    hr_override_score = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="HR override score for overall interview (0-100)"
+    )
+    hr_comment = models.TextField(
+        blank=True,
+        help_text="HR comments or rationale for decision/override"
+    )
+    hold_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Optional hold-until date for review follow-up"
+    )
+    hr_decision_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when HR recorded the decision"
+    )
     final_decision = models.CharField(
         max_length=20, 
         choices=FINAL_DECISION_CHOICES, 
@@ -67,6 +99,16 @@ class InterviewResult(models.Model):
     def __str__(self):
         status = "PASSED" if self.passed else "FAILED"
         return f"{self.applicant.full_name} - {status} (Score: {self.final_score})"
+
+    def save(self, *args, **kwargs):
+        # Ensure denormalized display name is set without runtime joins in summary endpoints.
+        if self.applicant and not self.applicant_display_name:
+            first = getattr(self.applicant, "first_name", "") or ""
+            last = getattr(self.applicant, "last_name", "") or ""
+            name = f"{first} {last}".strip()
+            if name:
+                self.applicant_display_name = name
+        super().save(*args, **kwargs)
 
 
 class ReapplicationTracking(models.Model):

@@ -1,44 +1,49 @@
 from rest_framework.permissions import BasePermission
+from common.permissions import IsHRUser as PermissionBasedIsHRUser
+
+
+def _user_type(user):
+    return getattr(user, "user_type", None) or getattr(user, "normalized_role", getattr(user, "role", None))
 
 
 class IsApplicant(BasePermission):
+    """
+    Strictly applicant-facing permission.
+    """
+
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and user.is_authenticated and getattr(user, "normalized_role", getattr(user, "role", None)) == "applicant")
+        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) == "applicant")
 
 
-class IsHR(BasePermission):
+class IsHRManager(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        role = getattr(user, "normalized_role", getattr(user, "role", None))
-        return bool(
-            user
-            and user.is_authenticated
-            and (
-                role in ["hr", "admin", "superadmin"]
-                or getattr(user, "is_staff", False)
-            )
-        )
+        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) == "hr_manager")
 
 
-class IsAdmin(BasePermission):
+class IsHRRecruiter(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        role = getattr(user, "normalized_role", getattr(user, "role", None))
-        return bool(
-            user
-            and user.is_authenticated
-            and (
-                role in ["admin", "superadmin"]
-                or getattr(user, "is_staff", False)
-            )
-        )
+        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) == "hr_recruiter")
 
 
-class IsSuperAdmin(BasePermission):
+class IsITSupport(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and user.is_authenticated and getattr(user, "is_superuser", False))
+        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) == "it_support")
+
+
+class HRPermission(BasePermission):
+    """
+    Allows HR Manager / HR Recruiter / IT Support roles.
+    """
+
+    allowed = {"hr_manager", "hr_recruiter", "it_support"}
+
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) in self.allowed)
 
 
 class RolePermission(BasePermission):
@@ -52,38 +57,24 @@ class RolePermission(BasePermission):
 
     def has_permission(self, request, view):
         user = request.user
-        if not (user and user.is_authenticated):
+        if not (user and getattr(user, "is_authenticated", False)):
             return False
 
-        # Superuser/staff shortcut
         if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
             return True
 
-        normalized_role = getattr(user, "normalized_role", getattr(user, "role", None))
+        normalized_role = _user_type(user)
         normalized_role_upper = normalized_role.upper() if normalized_role else None
-
         required_upper = [r.upper() for r in self.required_roles]
 
         if normalized_role_upper and normalized_role_upper in required_upper:
             return True
 
-        # Fallback: check group names if present
         try:
             groups = [g.upper().replace(" ", "_") for g in user.groups.values_list("name", flat=True)]
             return any(g in required_upper for g in groups)
         except Exception:
             return False
-
-
-class IsApplicantOnly(BasePermission):
-    """
-    Allow only applicant-authenticated requests (using applicant tokens).
-    """
-
-    def has_permission(self, request, view):
-        user = request.user
-        # applicant tokens set a non-User object (Applicant) with is_authenticated
-        return bool(user and getattr(user, "is_authenticated", False) and hasattr(user, "id") and not getattr(user, "is_staff", False))
 
 
 class ApplicantOrHR(BasePermission):
@@ -95,12 +86,34 @@ class ApplicantOrHR(BasePermission):
         user = request.user
         if not user:
             return False
-        if getattr(user, "is_authenticated", False) and hasattr(user, "id") and not getattr(user, "is_staff", False):
-            # applicant token-auth
+        if getattr(user, "is_authenticated", False) and _user_type(user) == "applicant":
             return True
-        role = getattr(user, "normalized_role", getattr(user, "role", None))
-        return bool(
-            getattr(user, "is_staff", False)
-            or getattr(user, "is_superuser", False)
-            or role in ["hr", "admin", "superadmin"]
-        )
+        return bool(_user_type(user) in ["hr_manager", "hr_recruiter", "it_support", "admin", "superadmin"] or getattr(user, "is_staff", False))
+
+
+# Backwards-compat aliases used elsewhere
+class IsAdmin(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) in ["admin", "superadmin"])
+
+
+class IsSuperAdmin(BasePermission):
+    def has_permission(self, request, view):
+        user = request.user
+        return bool(user and getattr(user, "is_authenticated", False) and getattr(user, "is_superuser", False))
+
+
+class IsHRUser(PermissionBasedIsHRUser):
+    """
+    HR access via Django permissions (single source of truth).
+    """
+    pass
+
+
+class IsApplicantUser(IsApplicant):
+    """
+    Alias for applicant-only permission.
+    """
+
+    pass

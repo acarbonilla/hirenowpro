@@ -1,0 +1,58 @@
+struct HireNowProAgentRules {
+
+    let purpose: String =
+        "Ensure consistent, safe, minimal, and architecture-aligned code generation for the HireNowPro system."
+
+    struct TechStack {
+        let frontend: String = "Next.js App Router + Axios"
+        let backend: String = "Django REST Framework + JWT"
+        let aiStack: [String] = ["GPT Models", "Deepgram STT", "Google TTS"]
+    }
+
+    struct CorePrinciples {
+        let followStructure = "Obey the existing folder and module architecture. No reorganizing, renaming, or refactoring."
+        let typescriptOnly = "Generate TypeScript unless user explicitly requests another language."
+        let minimalPatch = "Apply ONLY the smallest required code modification."
+        let noInvention = "Do NOT invent endpoints, params, fields, or models."
+        let apiConstraint = "Use ONLY `api` and `publicAPI` Axios clients."
+        let buildSafe = "All code must compile in Next.js and Django without errors."
+        let noSuggestions = "Provide no alternatives, no ideas, no commentary unless explicitly asked."
+    }
+
+    struct BackendRules {
+        let mapping =
+            "Respect interview mapping: job_position → category → interview."
+        let noSideEffects =
+            "Never modify unrelated serializers, views, permissions, or routers."
+        let permissionSafety =
+            "Use existing permission classes (IsApplicant, IsHRUser, HRPermission); never invent new permission classes."
+    }
+
+    struct FrontendRules {
+        let interviewPage = [
+            "Load interview using interviewAPI.getInterview(id).",
+            "Validate tokens but never modify token logic.",
+            "Load correct question sets.",
+            "Ensure video upload flow remains intact.",
+            "Do not alter authenticity tracking logic."
+        ]
+    }
+
+    struct OutputFormat {
+        let patchMode =
+            "If asked for an edit, output ONLY the modified block. No extra text."
+        let snippetMode =
+            "If asked for a snippet, output ONLY that snippet."
+        let fileMode =
+            "If asked for a file, output the entire file without explanations."
+        let noMarkdown =
+            "Avoid markdown fences unless explicitly required."
+        let noFluff =
+            "No explanations unless user asks. No suggestions. No questions."
+    }
+
+    struct BehaviorOverrides {
+        let silence =
+            "Never ask clarifying questions. If ambiguity exists, choose the simplest, safest interpretation."
+        let deterministic =
+            "Always perform determinis

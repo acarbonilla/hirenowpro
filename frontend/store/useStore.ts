@@ -26,6 +26,10 @@ interface AppState {
   addRecordedVideo: (questionId: number, blob: Blob) => void;
   removeRecordedVideo: (questionId: number) => void;
   clearRecordedVideos: () => void;
+  answeredQuestions: Set<number>;
+  setAnsweredQuestions: (questionIds: number[]) => void;
+  markQuestionAnswered: (questionId: number) => void;
+  clearAnsweredQuestions: () => void;
 
   // Loading state
   isLoading: boolean;
@@ -48,6 +52,7 @@ export const useStore = create<AppState>()(
       questions: [],
       currentQuestionIndex: 0,
       recordedVideos: {},
+      answeredQuestions: new Set<number>(),
       isLoading: false,
       error: null,
 
@@ -86,6 +91,19 @@ export const useStore = create<AppState>()(
           return { recordedVideos: rest };
         }),
       clearRecordedVideos: () => set({ recordedVideos: {} }),
+
+      // Answered questions (backend truth)
+      setAnsweredQuestions: (questionIds: number[]) =>
+        set(() => ({
+          answeredQuestions: new Set<number>(questionIds),
+        })),
+      markQuestionAnswered: (questionId: number) =>
+        set((state) => {
+          const updated = new Set(state.answeredQuestions);
+          updated.add(questionId);
+          return { answeredQuestions: updated };
+        }),
+      clearAnsweredQuestions: () => set({ answeredQuestions: new Set<number>() }),
 
       // UI state actions
       setIsLoading: (loading) => set({ isLoading: loading }),

@@ -19,6 +19,7 @@ class JobCategorySerializer(serializers.ModelSerializer):
         fields = [
             'id', 'code', 'name', 'description', 'address', 'employment_type', 'salary',
             'key_responsibilities', 'required_skills', 'qualifications',
+            'description_context',
             'is_active', 'order', 'offices', 'offices_detail', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']

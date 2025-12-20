@@ -102,54 +102,83 @@ class AIAnalysisService:
             }
         
         prompt = f"""
-You are an expert HR interviewer analyzing a candidate's video interview response.
+You are an AI assistant acting as a JUNIOR HR ANALYST.
+You provide structured, conservative, evidence-based evaluations.
+You DO NOT make hiring decisions. Final decisions are made by human HR.
 
-Interview Question: {question_text}
-Question Type: {question_type}
-Candidate's Response: {transcript_text}
+IMPORTANT RULES:
+- Base ALL judgments strictly on the transcript content.
+- Do NOT assume intent, skill, or experience unless explicitly stated.
+- Penalize vague, rambling, or off-topic answers.
+- If the response lacks clarity or depth, score accordingly.
+- Be consistent and conservative in scoring.
 
-Analyze the response and provide scores (0-100) for each criterion:
+Interview Context:
+- Question: {question_text}
+- Question Type: {question_type}
 
-1. SENTIMENT_SCORE: Evaluate the candidate's emotional tone, positivity, and enthusiasm
-   - 90-100: Highly positive, enthusiastic, and engaging
-   - 70-89: Positive attitude with good energy
-   - 50-69: Neutral or mixed emotions
-   - 0-49: Negative, disengaged, or inappropriate tone
+Candidate Response (verbatim transcript):
+\"\"\"
+{transcript_text}
+\"\"\"
 
-2. CONFIDENCE_SCORE: Assess self-assurance, certainty, and assertiveness
-   - 90-100: Extremely confident, articulate, no hesitation
-   - 70-89: Confident with minor uncertainties
-   - 50-69: Somewhat hesitant or uncertain
-   - 0-49: Lacks confidence, very uncertain
+EVALUATION CRITERIA (score each from 0 to 100):
 
-3. SPEECH_CLARITY_SCORE: Evaluate articulation, grammar, and communication clarity
-   - 90-100: Excellent articulation, perfect grammar, very clear
-   - 70-89: Good communication with minor issues
-   - 50-69: Understandable but with noticeable issues
-   - 0-49: Difficult to understand, poor grammar
+1. SENTIMENT_SCORE
+Evaluate emotional tone and professionalism.
+- High score ONLY if tone is calm, respectful, and appropriate.
+- Neutral tone is acceptable.
+- Penalize frustration, sarcasm, or disengagement.
 
-4. CONTENT_RELEVANCE_SCORE: Judge how well the answer addresses the question
-   - 90-100: Perfectly addresses question with excellent examples
-   - 70-89: Good answer with relevant points
-   - 50-69: Partially relevant, missing key points
-   - 0-49: Off-topic or fails to address the question
+2. CONFIDENCE_SCORE
+Evaluate confidence based on:
+- Clear statements
+- Logical flow
+- Lack of excessive hesitation or filler
+Do NOT reward overconfidence or verbosity.
 
-5. OVERALL_SCORE: Calculate average of above scores
+3. SPEECH_CLARITY_SCORE
+Evaluate:
+- Grammar
+- Sentence structure
+- Ease of understanding
+Accent is NOT a penalty.
 
-6. RECOMMENDATION: Based on overall score
-   - "pass" if overall_score >= 70
-   - "review" if overall_score between 50-69
-   - "fail" if overall_score < 50
+4. CONTENT_RELEVANCE_SCORE
+Evaluate how directly the answer addresses the question.
+This is the MOST IMPORTANT score.
+- Strong penalty if the answer avoids the question.
+- Strong reward for concrete examples and structured thinking.
 
-Provide your analysis in this EXACT JSON format (no additional text):
+5. OVERALL_SCORE
+Calculate the average of the above scores.
+Round to the nearest whole number.
+
+6. RECOMMENDATION
+This is a SUGGESTION ONLY:
+- "pass" -> overall_score >= 70 AND content_relevance_score >= 65
+- "review" -> overall_score between 50-69
+- "fail" -> overall_score < 50 OR content_relevance_score < 40
+
+7. ANALYSIS_SUMMARY
+Write 2-3 short sentences explaining:
+- What the candidate did well
+- What was missing or weak
+Avoid judgmental language.
+
+OUTPUT FORMAT:
+Return ONLY valid JSON.
+Do NOT include markdown.
+Do NOT include explanations outside JSON.
+
 {{
-    "sentiment_score": <number>,
-    "confidence_score": <number>,
-    "speech_clarity_score": <number>,
-    "content_relevance_score": <number>,
-    "overall_score": <number>,
-    "recommendation": "<pass|review|fail>",
-    "analysis_summary": "<brief 2-3 sentence explanation of the assessment>"
+  "sentiment_score": <number>,
+  "confidence_score": <number>,
+  "speech_clarity_score": <number>,
+  "content_relevance_score": <number>,
+  "overall_score": <number>,
+  "recommendation": "<pass|review|fail>",
+  "analysis_summary": "<concise explanation>"
 }}
 """
         import time
@@ -174,6 +203,22 @@ Provide your analysis in this EXACT JSON format (no additional text):
             for field in required_fields:
                 if field not in analysis:
                     raise ValueError(f"Missing required field: {field}")
+
+            # Clamp numeric scores to integers in [0, 100]
+            score_fields = [
+                'sentiment_score',
+                'confidence_score',
+                'speech_clarity_score',
+                'content_relevance_score',
+                'overall_score',
+            ]
+            for field in score_fields:
+                raw_value = analysis.get(field)
+                try:
+                    normalized = int(round(float(raw_value)))
+                except (TypeError, ValueError):
+                    normalized = 0
+                analysis[field] = max(0, min(100, normalized))
             
             # Log token usage
             response_time = time.time() - start_time

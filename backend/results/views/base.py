@@ -5,25 +5,23 @@ Views for interview results and HR review functionality
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import models
+from common.permissions import IsHRUser
 
-from .models import InterviewResult
-from .serializers import (
+from results.models import InterviewResult, SystemSettings
+from results.serializers import (
     InterviewResultSerializer,
     InterviewResultListSerializer,
     FullReviewSerializer,
     ScoreOverrideSerializer,
     ComparisonReportSerializer,
     AuthenticityCheckSerializer,
-    FinalDecisionSerializer
+    FinalDecisionSerializer,
 )
 from interviews.models import Interview, VideoResponse
-
-from .models import SystemSettings
-
 
 
 class InterviewResultViewSet(viewsets.ModelViewSet):
@@ -39,6 +37,7 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
     """
     
     queryset = InterviewResult.objects.all()
+    permission_classes = [IsAuthenticated, IsHRUser]
     
     def get_serializer_class(self):
         """Return appropriate serializer based on action"""
@@ -56,12 +55,6 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
             return FinalDecisionSerializer
         return InterviewResultSerializer
     
-    def get_permissions(self):
-        """Set permissions"""
-        if self.action in ['list', 'retrieve', 'full_review']:
-            return [AllowAny()]
-        return [IsAuthenticated()]
-    
     def get_queryset(self):
         """Filter results based on query parameters"""
         queryset = super().get_queryset()
@@ -72,7 +65,6 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
             # Only show results that need review:
             # 1. No final decision made yet
             # 2. Score in review range OR has AI-detected issues that need review
-            from .models import SystemSettings
             passing_threshold = SystemSettings.get_passing_threshold()
             review_threshold = SystemSettings.get_review_threshold()
             
@@ -203,6 +195,12 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
         }
         """
         result = self.get_object()
+        reopen_review = bool(request.data.get("reopen_review"))
+        if result.hr_decision and not reopen_review:
+            return Response(
+                {"detail": "HR decision already recorded. Provide reopen_review to update scores."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
         # Validate request data
         serializer = ScoreOverrideSerializer(data=request.data)
@@ -210,7 +208,7 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
         
         video_response_id = serializer.validated_data['video_response_id']
         override_score = serializer.validated_data['override_score']
-        comments = serializer.validated_data['comments']
+        comments = (serializer.validated_data.get('comments') or '').strip()
         
         # Get video response
         video_response = get_object_or_404(
@@ -219,6 +217,18 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
             interview=result.interview
         )
         
+        ai_score = video_response.ai_score
+        if ai_score is not None:
+            try:
+                delta = abs(float(override_score) - float(ai_score))
+            except (TypeError, ValueError):
+                delta = None
+            if delta is not None and delta > 20 and len(comments) < 20:
+                return Response(
+                    {"detail": "Comment must be at least 20 characters when override delta exceeds 20 points."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # Update with HR override
         video_response.hr_override_score = override_score
         video_response.hr_comments = comments
@@ -408,6 +418,12 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
         }
         """
         result = self.get_object()
+        reopen_review = bool(request.data.get("reopen_review"))
+        if result.hr_decision and not reopen_review:
+            return Response(
+                {"detail": "HR decision already recorded. Provide reopen_review to update."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
         # Validate request data
         serializer = FinalDecisionSerializer(data=request.data)
@@ -417,6 +433,10 @@ class InterviewResultViewSet(viewsets.ModelViewSet):
         notes = serializer.validated_data.get('notes', '')
         
         # Record final decision
+        result.hr_decision = "hire" if decision == "hired" else "reject"
+        result.hr_comment = notes
+        result.hold_until = None
+        result.hr_decision_at = timezone.now()
         result.final_decision = decision
         result.final_decision_date = timezone.now()
         result.final_decision_by = request.user
@@ -460,8 +480,7 @@ class SystemSettingsViewSet(viewsets.ViewSet):
     
     def list(self, request):
         """Get current system settings"""
-        from .models import SystemSettings
-        from .settings_serializers import SystemSettingsSerializer
+        from results.settings_serializers import SystemSettingsSerializer
         
         settings = SystemSettings.get_settings()
         serializer = SystemSettingsSerializer(settings)
@@ -469,8 +488,7 @@ class SystemSettingsViewSet(viewsets.ViewSet):
     
     def update(self, request, pk=None):
         """Update system settings (HR/Admin only)"""
-        from .models import SystemSettings
-        from .settings_serializers import SystemSettingsSerializer
+        from results.settings_serializers import SystemSettingsSerializer
         
         # Check if user has permission (is_staff or is_superuser)
         if not (request.user.is_staff or request.user.is_superuser):

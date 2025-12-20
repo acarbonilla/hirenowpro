@@ -145,7 +145,7 @@ export default function ApplicantDetailHistoryPage() {
       <div className="text-center py-12">
         <p className="text-red-600 text-lg">{error || "Applicant not found"}</p>
         <Link href="/hr-dashboard/history" className="text-orange-600 hover:text-orange-800 mt-4 inline-block">
-          ← Back to History
+          ← Back to Interview Records
         </Link>
       </div>
     );
@@ -156,7 +156,7 @@ export default function ApplicantDetailHistoryPage() {
       {/* Header */}
       <div>
         <Link href="/hr-dashboard/history" className="text-orange-600 hover:text-orange-800 text-sm mb-2 inline-block">
-          ← Back to History
+          ← Back to Interview Records
         </Link>
         <div className="flex items-center justify-between">
           <div>

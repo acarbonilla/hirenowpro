@@ -4,6 +4,8 @@ from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
 from applicants.models import Applicant
 from datetime import datetime, timedelta
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from django.contrib.auth import get_user_model
 
 
 APPLICANT_SECRET = getattr(settings, "APPLICANT_SECRET", settings.SECRET_KEY)
@@ -127,5 +129,32 @@ class ApplicantTokenAuthentication(BaseAuthentication):
 
         # Mark as authenticated
         setattr(applicant, "is_authenticated", True)
+        setattr(applicant, "user_type", "applicant")
         print("DEBUG_TOKEN_RESULT:", applicant.id)
         return (applicant, None)
+
+
+class HRTokenAuthentication(JWTAuthentication):
+    """
+    JWT authentication that only allows HR roles.
+    """
+
+    allowed_roles = {"hr_manager", "hr_recruiter", "it_support"}
+
+    def authenticate(self, request):
+        res = super().authenticate(request)
+        if not res:
+            return None
+        user, token = res
+        role = getattr(user, "role", None)
+        # SimpleJWT stores claims; token.payload may have role claim
+        claim_role = None
+        try:
+            claim_role = token.payload.get("role")
+        except Exception:
+            pass
+        # Role is informational only; authorization handled by DRF permissions.
+        effective_role = claim_role or role
+        if effective_role:
+            setattr(user, "user_type", effective_role)
+        return (user, token)

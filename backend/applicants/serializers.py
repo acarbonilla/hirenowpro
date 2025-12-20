@@ -234,6 +234,12 @@ class ApplicantListSerializer(serializers.ModelSerializer):
     
     full_name = serializers.ReadOnlyField()
     position_applied = serializers.SerializerMethodField()
+    applicant_status = serializers.SerializerMethodField()
+    applicant_status_key = serializers.SerializerMethodField()
+    needs_hr_action = serializers.SerializerMethodField()
+    has_pending_review = serializers.SerializerMethodField()
+    days_until_reapply = serializers.SerializerMethodField()
+    pending_review_result_id = serializers.SerializerMethodField()
     
     class Meta:
         model = Applicant
@@ -246,7 +252,13 @@ class ApplicantListSerializer(serializers.ModelSerializer):
             'status',
             'application_date',
             'reapplication_date',
+            'days_until_reapply',
             'position_applied',
+            'applicant_status',
+            'applicant_status_key',
+            'needs_hr_action',
+            'has_pending_review',
+            'pending_review_result_id',
             'latitude',
             'longitude',
             'distance_from_office',
@@ -255,11 +267,43 @@ class ApplicantListSerializer(serializers.ModelSerializer):
     
     def get_position_applied(self, obj):
         """Get position from the applicant's interview if exists"""
-        try:
-            from interviews.models import Interview
-            interview = Interview.objects.filter(applicant=obj).first()
-            if interview and interview.position_type:
-                return interview.position_type.name
+        return getattr(obj, "latest_position_name", None)
+
+    def get_applicant_status_key(self, obj):
+        return getattr(obj, "applicant_status_key", None)
+
+    def get_applicant_status(self, obj):
+        status_key = getattr(obj, "applicant_status_key", None)
+        labels = {
+            "no_interview": "No Interview",
+            "interview_in_progress": "Interview In Progress",
+            "pending_hr_decision": "Pending HR Decision",
+            "failed_cooldown": "Failed (Cooldown)",
+            "eligible_reapply": "Eligible to Reapply",
+            "hired": "Hired",
+        }
+        if status_key in labels:
+            return labels[status_key]
+        return "Interview In Progress"
+
+    def get_needs_hr_action(self, obj):
+        return bool(getattr(obj, "needs_hr_action", False))
+
+    def get_has_pending_review(self, obj):
+        return bool(getattr(obj, "has_pending_review", False))
+
+    def get_days_until_reapply(self, obj):
+        from django.utils import timezone
+
+        reapply_date = getattr(obj, "reapplication_date", None)
+        if not reapply_date:
             return None
-        except Exception:
+        today = timezone.localdate()
+        if reapply_date <= today:
             return None
+        return (reapply_date - today).days
+
+    def get_pending_review_result_id(self, obj):
+        if not bool(getattr(obj, "has_pending_review", False)):
+            return None
+        return getattr(obj, "latest_result_id", None)

@@ -67,8 +67,8 @@ class InterviewQuestionAdmin(admin.ModelAdmin):
     list_editable = ['order', 'is_active']
     fieldsets = (
         ('Question Details', {
-            'fields': ('question_text', 'position_type', 'category', 'question_type', 'max_duration', 'tags'),
-            'description': "Tags indicate what subroles this question applies to."
+            'fields': ('question_text', 'position_type', 'category', 'question_type', 'competency', 'max_duration'),
+            'description': "Competency determines routing for the initial interview."
         }),
         ('Display Settings', {
             'fields': ('order', 'is_active')
@@ -112,8 +112,8 @@ class JobPositionAdmin(admin.ModelAdmin):
             'fields': ('name', 'code', 'description', 'category', 'is_active')
         }),
         ('Assignments', {
-            'fields': ('offices', 'subroles'),
-            'description': "Subroles determine which specialized questions this job requires."
+            'fields': ('offices',),
+            'description': "Positions now route questions by competency, not subroles."
         }),
         ('Metadata', {
             'fields': ('created_by',)

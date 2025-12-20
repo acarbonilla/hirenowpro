@@ -2,7 +2,8 @@
 Authentication views
 """
 
-from rest_framework import status, generics, permissions
+from rest_framework import status, generics, permissions, viewsets
+from rest_framework.settings import api_settings
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -16,7 +17,8 @@ from .serializers import (
     RegisterSerializer,
     ChangePasswordSerializer
 )
-from .permissions import IsHR, IsApplicant, IsAdmin, IsSuperAdmin
+from .permissions import IsApplicant, IsAdmin, IsSuperAdmin, IsHRUser
+from .authentication import HRTokenAuthentication
 
 
 class LoginView(generics.GenericAPIView):
@@ -26,6 +28,7 @@ class LoginView(generics.GenericAPIView):
     """
     serializer_class = LoginSerializer
     permission_classes = [AllowAny]
+    authentication_classes = []
     
     allowed_roles = None  # allow any authenticated user by default
     
@@ -38,7 +41,23 @@ class LoginView(generics.GenericAPIView):
         # Role gate if configured
         normalized_role = getattr(user, "normalized_role", getattr(user, "role", None))
         if self.allowed_roles is not None and normalized_role not in self.allowed_roles:
-            return Response({"detail": "Access denied for this role."}, status=status.HTTP_403_FORBIDDEN)
+            # For HR login, derive role from group membership; otherwise enforce allowed_roles strictly
+            is_hr_login = any(role.lower() == "hr" for role in self.allowed_roles)
+            if is_hr_login:
+                hr_role = None
+                if user.groups.filter(name="HR Recruiter").exists():
+                    hr_role = "recruiter"
+                elif user.groups.filter(name="HR Manager").exists():
+                    hr_role = "hr_manager"
+                elif user.groups.filter(name="IT Support").exists():
+                    hr_role = "it_support"
+
+                if hr_role is None:
+                    return Response({"detail": "Access denied for this role."}, status=status.HTTP_403_FORBIDDEN)
+
+                normalized_role = hr_role
+            else:
+                return Response({"detail": "Access denied for this role."}, status=status.HTTP_403_FORBIDDEN)
         
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
@@ -151,11 +170,26 @@ def check_auth(request):
     user = request.user
     groups = list(user.groups.values_list('name', flat=True))
     role = getattr(user, "normalized_role", getattr(user, "role", None))
+    user_type = getattr(user, "user_type", role)
     
+    can_view_system_analytics = (
+        'HR Manager' in groups
+        or 'Lead Recruiter' in groups
+        or 'System Owner' in groups
+        or user.is_superuser
+        or role in ['admin', 'superadmin', 'hr_manager']
+    )
+    can_view_recruiter_insights = (
+        'HR Recruiter' in groups
+        or 'HR Manager' in groups
+        or can_view_system_analytics
+    )
+
     return Response({
         'authenticated': True,
         'user': UserSerializer(user).data,
         'groups': groups,
+        'user_type': user_type,
         'permissions': {
             'is_hr_recruiter': 'HR Recruiter' in groups,
             'is_hr_manager': 'HR Manager' in groups,
@@ -163,5 +197,18 @@ def check_auth(request):
             'is_staff': user.is_staff,
             'is_superuser': user.is_superuser,
             'role': role,
+            'can_view_recruiter_insights': can_view_recruiter_insights,
+            'can_view_system_analytics': can_view_system_analytics,
         }
     }, status=status.HTTP_200_OK)
+
+
+class HRUserViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    HR-only user list for dashboard usage.
+    """
+
+    permission_classes = [IsAuthenticated, IsHRUser]
+    authentication_classes = [HRTokenAuthentication, *api_settings.DEFAULT_AUTHENTICATION_CLASSES]
+    serializer_class = UserSerializer
+    queryset = User.objects.all()

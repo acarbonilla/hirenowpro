@@ -48,7 +48,8 @@ Open a **new terminal** in your project:
 ```powershell
 cd backend
 & .\venv\Scripts\Activate.ps1
-celery -A core worker --loglevel=info --pool=solo
+python -m celery -A core.celery worker -l info -P solo
+# Windows: use solo pool. Prefork is Linux-only and breaks on Python 3.13.
 ```
 
 > Keep this terminal open while testing!
@@ -215,7 +216,7 @@ Redirect to completion page
 
 1. Install Docker Desktop: https://www.docker.com/products/docker-desktop/
 2. Run: `docker run -d -p 6379:6379 --name redis-hirenow redis:alpine`
-3. Start Celery: `celery -A core worker --loglevel=info --pool=solo`
+3. Start Celery: `python -m celery -A core.celery worker -l info -P solo` (solo pool required on Windows)
 4. Test interview submission
 
 **To deploy to production:**

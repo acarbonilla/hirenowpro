@@ -236,7 +236,8 @@ docker run -d -p 6379:6379 --name redis-hirenow redis:alpine
 
 # Start Celery worker
 cd backend
-celery -A core worker --loglevel=info --pool=solo
+python -m celery -A core.celery worker -l info -P solo
+# Windows dev: solo pool only. Prefork is Linux-only and crashes on Python 3.13.
 
 # That's it! Submit now returns in 1-2 seconds
 ```

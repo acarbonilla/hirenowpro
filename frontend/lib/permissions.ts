@@ -8,6 +8,8 @@ export interface UserPermissions {
   is_it_support: boolean;
   is_staff: boolean;
   is_superuser: boolean;
+  can_view_recruiter_insights?: boolean;
+  can_view_system_analytics?: boolean;
 }
 
 export interface UserWithPermissions {
@@ -45,7 +47,21 @@ export function canManageUsers(user: UserWithPermissions | null): boolean {
 }
 
 export function canAccessAnalytics(user: UserWithPermissions | null): boolean {
-  return isHRManager(user) || user?.permissions?.is_superuser || false;
+  return (
+    user?.permissions?.can_view_recruiter_insights
+    || isHRRecruiter(user)
+    || isHRManager(user)
+    || user?.permissions?.is_superuser
+    || false
+  );
+}
+
+export function canViewRecruiterInsights(user: UserWithPermissions | null): boolean {
+  return user?.permissions?.can_view_recruiter_insights || isHRRecruiter(user) || isHRManager(user) || false;
+}
+
+export function canViewSystemAnalytics(user: UserWithPermissions | null): boolean {
+  return user?.permissions?.can_view_system_analytics || isHRManager(user) || user?.permissions?.is_superuser || false;
 }
 
 export function canManageQuestions(user: UserWithPermissions | null): boolean {
@@ -55,11 +71,11 @@ export function canManageQuestions(user: UserWithPermissions | null): boolean {
 export function getFilteredNavigation(user: UserWithPermissions | null) {
   const allItems = [
     { name: "Overview", href: "/hr-dashboard", icon: "🏠", roles: ["all"] },
-    { name: "HR Review Queue", href: "/hr-dashboard/interviews", icon: "📝", roles: ["hr_staff"] },
-    { name: "Interview Results", href: "/hr-dashboard/results", icon: "📊", roles: ["hr_staff"] },
-    { name: "Applicant History", href: "/hr-dashboard/history", icon: "🗂", roles: ["hr_staff"] },
+    { name: "HR Review Queue", href: "/hr-dashboard/review-queue", icon: "📝", roles: ["hr_staff"] },
+    { name: "Interview Review", href: "/hr-dashboard/results", icon: "📊", roles: ["hr_staff"] },
+    { name: "Interview Records", href: "/hr-dashboard/history", icon: "🗂", roles: ["hr_staff"] },
     { name: "Applicants", href: "/hr-dashboard/applicants", icon: "👥", roles: ["hr_staff"] },
-    { name: "Analytics", href: "/hr-dashboard/analytics", icon: "📈", roles: ["hr_manager"] },
+    { name: "Analytics", href: "/hr-dashboard/analytics", icon: "📈", roles: ["hr_staff"] },
     { name: "AI vs HR Comparison", href: "/hr-dashboard/ai-comparison", icon: "🤖", roles: ["hr_manager"] },
     {
       name: "Token Monitoring",

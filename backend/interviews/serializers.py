@@ -1,6 +1,13 @@
 from rest_framework import serializers
-from .models import Interview, InterviewQuestion, VideoResponse, AIAnalysis, JobPosition
-from .type_models import PositionType
+from .models import (
+    Interview,
+    InterviewQuestion,
+    VideoResponse,
+    AIAnalysis,
+    JobPosition,
+    COMPETENCY_CHOICES,
+)
+from .type_models import PositionType, QuestionType
 from .type_serializers import JobCategorySerializer, QuestionTypeSerializer
 from applicants.serializers import ApplicantListSerializer
 from applicants.models import OfficeLocation
@@ -19,7 +26,6 @@ class JobPositionSerializer(serializers.ModelSerializer):
     offices = serializers.PrimaryKeyRelatedField(many=True, queryset=OfficeLocation.objects.all())
     category = serializers.PrimaryKeyRelatedField(queryset=PositionType.objects.all())
     category_detail = JobCategorySerializer(source="category", read_only=True)
-    subroles = serializers.ListField(child=serializers.CharField(), required=False, allow_empty=True)
     created_by = serializers.ReadOnlyField(source='created_by.username')
 
     class Meta:
@@ -33,7 +39,6 @@ class JobPositionSerializer(serializers.ModelSerializer):
             "job_category",
             "category",
             "category_detail",
-            "subroles",
             "offices",
             "offices_detail",
             "created_by",
@@ -44,39 +49,147 @@ class JobPositionSerializer(serializers.ModelSerializer):
 
 
 class InterviewQuestionSerializer(serializers.ModelSerializer):
-    """Serializer for interview questions"""
+    """Serializer for interview questions (competency-based, tags removed)"""
     
     question_type_detail = QuestionTypeSerializer(source='question_type', read_only=True)
     job_category_detail = JobCategorySerializer(source='position_type', read_only=True)
     category_detail = JobCategorySerializer(source='category', read_only=True)
-    tags = serializers.ListField(child=serializers.CharField(), required=False, allow_empty=True)
+    competency = serializers.ChoiceField(choices=COMPETENCY_CHOICES)
+    tags = serializers.ListField(read_only=True)
     question_type_id = serializers.PrimaryKeyRelatedField(
         source='question_type',
         queryset=serializers.SerializerMethodField(),
         write_only=True,
         required=False
     )
-    position_type_id = serializers.PrimaryKeyRelatedField(
-        source='position_type',
+    category_id = serializers.PrimaryKeyRelatedField(
+        source='category',
         queryset=serializers.SerializerMethodField(),
         write_only=True,
-        required=False
+        required=True,
+        help_text="Job category (PositionType) this question is for",
     )
     
     class Meta:
         model = InterviewQuestion
         fields = [
-            'id', 'question_text', 'question_type', 'position_type', 'category', 'tags',
-            'question_type_detail', 'job_category_detail', 'category_detail',
-            'question_type_id', 'position_type_id', 'order'
+            'id',
+            'question_text',
+            'question_type',
+            'position_type',
+            'category',
+            'competency',
+            'tags',
+            'order',
+            'question_type_detail',
+            'job_category_detail',
+            'category_detail',
+            'question_type_id',
+            'category_id',
         ]
+        read_only_fields = ['position_type', 'tags', 'order']
     
     def get_fields(self):
         fields = super().get_fields()
         from .type_models import QuestionType, PositionType
         fields['question_type_id'].queryset = QuestionType.objects.filter(is_active=True)
-        fields['position_type_id'].queryset = PositionType.objects.filter(is_active=True)
+        fields['category_id'].queryset = PositionType.objects.filter(is_active=True)
         return fields
+
+    def validate(self, attrs):
+        # Mirror category into position_type to keep selection logic category-based
+        category = attrs.get("category") or getattr(self.instance, "category", None)
+        if not category:
+            raise serializers.ValidationError({"category": "Job category is required for initial interview questions."})
+        if not attrs.get("competency") and not getattr(self.instance, "competency", None):
+            raise serializers.ValidationError({"competency": "Competency is required for initial interview questions."})
+        if category and not attrs.get("position_type"):
+            attrs["position_type"] = category
+        return attrs
+
+
+class InterviewQuestionWriteSerializer(serializers.ModelSerializer):
+    """
+    Write-focused serializer with a minimal, explicit contract.
+    Accepts IDs for question_type and category (job category).
+    Legacy fields (position_type, tags, order) are ignored or read-only.
+    """
+
+    question_type_id = serializers.PrimaryKeyRelatedField(
+        source="question_type",
+        queryset=QuestionType.objects.all(),
+        write_only=True,
+        required=False,
+    )
+    category_id = serializers.PrimaryKeyRelatedField(
+        source="category",
+        queryset=PositionType.objects.filter(is_active=True),
+        write_only=True,
+        required=False,
+    )
+    # Backward-compatible aliases (accept plain ints)
+    question_type = serializers.IntegerField(write_only=True, required=False)
+    category = serializers.IntegerField(write_only=True, required=False)
+    competency = serializers.ChoiceField(choices=COMPETENCY_CHOICES, required=True)
+    order = serializers.IntegerField(required=False, allow_null=True)
+
+    class Meta:
+        model = InterviewQuestion
+        fields = [
+            "question_text",
+            "question_type_id",
+            "category_id",
+            "question_type",
+            "category",
+            "competency",
+            "order",
+        ]
+
+    def validate(self, attrs):
+        data = attrs.copy()
+        errors = {}
+
+        # Resolve question_type from either id field
+        qt = data.get("question_type")
+        qt_id = data.get("question_type_id")
+        if qt and not qt_id:
+            try:
+                data["question_type"] = QuestionType.objects.get(pk=qt)
+                data["question_type_id"] = data["question_type"]
+            except QuestionType.DoesNotExist:
+                errors["question_type"] = ["Invalid question_type."]
+        elif not qt_id and not qt:
+            errors["question_type"] = ["This field is required."]
+
+        # Resolve category (job category) from either id field
+        cat = data.get("category")
+        cat_id = data.get("category_id")
+        if cat and not cat_id:
+            try:
+                data["category"] = PositionType.objects.get(pk=cat)
+                data["category_id"] = data["category"]
+            except PositionType.DoesNotExist:
+                errors["category"] = ["Invalid category."]
+        elif not cat_id and not cat:
+            errors["category"] = ["This field is required."]
+
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        # Normalize order
+        if "order" not in data or data.get("order") is None:
+            data["order"] = 0
+
+        # Mirror category into position_type for backward compatibility
+        category_obj = data.get("category") or data.get("category_id")
+        if category_obj:
+            data["position_type"] = category_obj
+
+        # Remove alias ints to avoid assignment issues
+        data.pop("question_type", None)
+        data.pop("category", None)
+
+        return data
 
 
 class AIAnalysisSerializer(serializers.ModelSerializer):
@@ -168,6 +281,31 @@ class VideoResponseCreateSerializer(serializers.Serializer):
         return value
 
 
+class HRDecisionSerializer(serializers.Serializer):
+    """Serializer for HR interview decision updates"""
+
+    decision = serializers.ChoiceField(
+        choices=["hire", "reject", "hold"],
+        required=True,
+    )
+    hr_comment = serializers.CharField(required=False, allow_blank=True)
+    hold_until = serializers.DateTimeField(required=False, allow_null=True)
+    reopen_review = serializers.BooleanField(required=False)
+
+    def validate(self, attrs):
+        decision = attrs.get("decision")
+        hr_comment = (attrs.get("hr_comment") or "").strip()
+        hold_until = attrs.get("hold_until")
+
+        if decision == "hold":
+            if not hr_comment:
+                raise serializers.ValidationError({"hr_comment": "Comment is required when placing on hold."})
+            if not hold_until:
+                raise serializers.ValidationError({"hold_until": "Hold-until date is required when placing on hold."})
+
+        return attrs
+
+
 class InterviewSerializer(serializers.ModelSerializer):
     """Serializer for interview model"""
     
@@ -186,6 +324,9 @@ class InterviewSerializer(serializers.ModelSerializer):
             'position_type',
             'category_detail',
             'status',
+            'hr_decision',
+            'hr_decision_reason',
+            'hr_decision_at',
             'created_at',
             'submission_date',
             'completed_at',
@@ -202,7 +343,10 @@ class InterviewSerializer(serializers.ModelSerializer):
             'completed_at',
             'status',
             'authenticity_flag',
-            'authenticity_status'
+            'authenticity_status',
+            'hr_decision',
+            'hr_decision_reason',
+            'hr_decision_at'
         ]
     
     def get_position_type(self, obj):
@@ -212,23 +356,13 @@ class InterviewSerializer(serializers.ModelSerializer):
         return None
     
     def get_questions(self, obj):
-        """Get active questions for the interview"""
-        qs = InterviewQuestion.objects.filter(is_active=True).order_by('order')
-        if obj.position_type_id:
-            qs = qs.filter(category_id=obj.position_type_id)
-        print("DEBUG_INTERVIEW_POSITION_TYPE:", obj.position_type_id)
-        subroles = getattr(obj, "_job_position_subroles", None)
-        if subroles:
-            q = Q()
-            for tag in subroles:
-                q |= Q(tags__contains=[tag])
-            if q:
-                refined = qs.filter(q)
-                if refined.exists():
-                    qs = refined
-        print("DEBUG_QUESTIONS_FOUND:", qs.count())
-        questions = qs
-        return InterviewQuestionSerializer(questions, many=True).data
+        """Get active questions for the interview filtered by position type (position-first)."""
+        if not obj.position_type_id:
+            return []
+        from .question_selection import select_questions_for_interview
+
+        qs = select_questions_for_interview(obj)
+        return InterviewQuestionSerializer(qs, many=True).data
 
 
 class InterviewCreateSerializer(serializers.ModelSerializer):
@@ -236,15 +370,18 @@ class InterviewCreateSerializer(serializers.ModelSerializer):
     
     applicant = serializers.PrimaryKeyRelatedField(queryset=Applicant.objects.all())
     position_type = serializers.PrimaryKeyRelatedField(queryset=PositionType.objects.all())
+    job_position_id = serializers.IntegerField(required=False, allow_null=True)
     
     class Meta:
         model = Interview
-        fields = ['applicant', 'interview_type', 'position_type']
+        fields = ['applicant', 'interview_type', 'position_type', 'job_position_id']
     
     def create(self, validated_data):
+        job_position_id = validated_data.pop("job_position_id", None)
         validated_data['status'] = 'pending'
         print("DEBUG_INTERVIEW_INPUT:", validated_data)
         interview = super().create(validated_data)
+
         # Update applicant status
         applicant = validated_data.get('applicant')
         if applicant:
@@ -383,6 +520,7 @@ class ProcessingStatusResponseSerializer(serializers.Serializer):
 
 class InterviewListSerializer(serializers.ModelSerializer):
     applicant_name = serializers.CharField(source="applicant.full_name", read_only=True)
+    applicant_full_name = serializers.SerializerMethodField()
     position = serializers.SerializerMethodField()
 
     class Meta:
@@ -390,13 +528,27 @@ class InterviewListSerializer(serializers.ModelSerializer):
         fields = [
             "id",
             "status",
+            "hr_decision",
             "created_at",
             "position_type",
             "applicant_name",
+            "applicant_full_name",
             "position",
         ]
 
     def get_position(self, obj):
         return obj.position_type.code if obj.position_type else None
+
+    def get_applicant_full_name(self, obj):
+        """
+        Lightweight display name for list views; do not add heavy applicant data here.
+        """
+        applicant = getattr(obj, "applicant", None)
+        if not applicant:
+            return None
+        first = getattr(applicant, "first_name", "") or ""
+        last = getattr(applicant, "last_name", "") or ""
+        full = f"{first} {last}".strip()
+        return full if full else getattr(applicant, "full_name", None)
     
     

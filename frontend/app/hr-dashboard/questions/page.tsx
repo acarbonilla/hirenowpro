@@ -21,16 +21,26 @@ interface Question {
   question_text: string;
   question_type: number | TypeDetail;
   question_type_detail?: TypeDetail;
-  position_type: number | TypeDetail;
-  position_type_detail?: TypeDetail;
+  category: number | TypeDetail;
+  category_detail?: TypeDetail;
   order: number;
   is_active?: boolean;
   max_duration?: string;
-  tags?: string[];
+  competency: string;
 }
 
 type QuestionType = "technical" | "behavioral" | "situational" | "general" | "";
 type PositionType = "virtual_assistant" | "customer_service" | "it_support" | "sales_marketing" | "general" | "";
+
+const COMPETENCY_OPTIONS = [
+  { value: "communication", label: "Communication" },
+  { value: "customer_handling", label: "Customer Handling" },
+  { value: "problem_explanation", label: "Problem Explanation" },
+  { value: "troubleshooting", label: "Troubleshooting" },
+  { value: "technical_reasoning", label: "Technical Reasoning" },
+  { value: "networking_concepts", label: "Networking Concepts" },
+  { value: "sales_upselling", label: "Sales / Upselling" },
+];
 
 export default function QuestionsPage() {
   const router = useRouter();
@@ -48,15 +58,14 @@ export default function QuestionsPage() {
   const [saving, setSaving] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [newTag, setNewTag] = useState("");
 
   // Form state for add/edit
   const [formData, setFormData] = useState({
     question_text: "",
     question_type_id: 0,
-    position_type_id: 0,
+    category_id: 0,
     order: 0,
-    tags: [] as string[],
+    competency: "communication",
   });
 
   useEffect(() => {
@@ -145,17 +154,17 @@ export default function QuestionsPage() {
       filtered = filtered.filter((q) => q.question_text.toLowerCase().includes(searchQuery.toLowerCase()));
     }
 
-    // Position filter
+    // Position filter (job category)
     if (positionFilter) {
       filtered = filtered.filter((q) => {
         let code = "";
-        if (typeof q.position_type === "object" && q.position_type !== null) {
-          code = q.position_type.code;
-        } else if (typeof q.position_type === "number") {
-          const foundType = positionTypes.find((t) => t.id === q.position_type);
+        if (typeof q.category === "object" && q.category !== null) {
+          code = q.category.code;
+        } else if (typeof q.category === "number") {
+          const foundType = positionTypes.find((t) => t.id === q.category);
           code = foundType ? foundType.code : "";
         } else {
-          code = String(q.position_type);
+          code = String(q.category);
         }
         return code === positionFilter;
       });
@@ -184,7 +193,7 @@ export default function QuestionsPage() {
     setEditingQuestion(null);
     // Set default IDs to first available type
     const defaultQuestionTypeId = questionTypes.find((t) => t.code === "general")?.id || questionTypes[0]?.id || 0;
-    const defaultPositionTypeId = positionTypes.find((t) => t.code === "general")?.id || positionTypes[0]?.id || 0;
+    const defaultCategoryId = positionTypes.find((t) => t.code === "general")?.id || positionTypes[0]?.id || 0;
 
     // Calculate next order number automatically
     const maxOrder = questions.length > 0 ? Math.max(...questions.map((q) => q.order)) : -1;
@@ -192,9 +201,9 @@ export default function QuestionsPage() {
     setFormData({
       question_text: "",
       question_type_id: defaultQuestionTypeId,
-      position_type_id: defaultPositionTypeId,
+      category_id: defaultCategoryId,
       order: maxOrder + 1,
-      tags: [],
+      competency: "communication",
     });
     setShowAddModal(true);
   };
@@ -212,18 +221,18 @@ export default function QuestionsPage() {
       questionTypeId = question.question_type;
     }
 
-    if (typeof question.position_type === "object" && question.position_type !== null) {
-      positionTypeId = question.position_type.id;
-    } else if (typeof question.position_type === "number") {
-      positionTypeId = question.position_type;
+    if (typeof question.category === "object" && question.category !== null) {
+      positionTypeId = question.category.id;
+    } else if (typeof question.category === "number") {
+      positionTypeId = question.category;
     }
 
     setFormData({
       question_text: question.question_text,
       question_type_id: questionTypeId,
-      position_type_id: positionTypeId,
+      category_id: positionTypeId,
       order: question.order,
-      tags: question.tags || [],
+      competency: question.competency || "communication",
     });
     setShowAddModal(true);
   };
@@ -234,8 +243,8 @@ export default function QuestionsPage() {
       return;
     }
 
-    if (!formData.question_type_id || !formData.position_type_id) {
-      alert("Please select both question type and position type");
+    if (!formData.question_type_id || !formData.category_id) {
+      alert("Please select both question type and job category");
       return;
     }
 
@@ -254,9 +263,9 @@ export default function QuestionsPage() {
       const payload = {
         question_text: formData.question_text,
         question_type_id: formData.question_type_id,
-        position_type_id: formData.position_type_id,
+        category_id: formData.category_id,
         order: order,
-        tags: formData.tags,
+        competency: formData.competency,
       };
 
       if (editingQuestion) {
@@ -270,8 +279,12 @@ export default function QuestionsPage() {
       setShowAddModal(false);
       fetchQuestions(); // Refresh the list
     } catch (err: any) {
-      console.error("Error saving question:", err);
-      alert(err.response?.data?.detail || "Failed to save question");
+      const raw = err?.response?.data;
+      console.error("Error saving question:", raw);
+      const message =
+        raw?.detail ||
+        (raw && typeof raw === "object" ? JSON.stringify(raw, null, 2) : String(raw) || "Failed to save question");
+      alert(message);
     } finally {
       setSaving(false);
     }
@@ -365,13 +378,13 @@ export default function QuestionsPage() {
 
     questions.forEach((q) => {
       let posCode = "";
-      if (typeof q.position_type === "object" && q.position_type !== null) {
-        posCode = q.position_type.code;
-      } else if (typeof q.position_type === "number") {
-        const foundType = positionTypes.find((t) => t.id === q.position_type);
+      if (typeof q.category === "object" && q.category !== null) {
+        posCode = q.category.code;
+      } else if (typeof q.category === "number") {
+        const foundType = positionTypes.find((t) => t.id === q.category);
         posCode = foundType ? foundType.code : "unknown";
       } else {
-        posCode = String(q.position_type);
+        posCode = String(q.category);
       }
 
       let typeCode = "";
@@ -628,10 +641,10 @@ export default function QuestionsPage() {
                       <td className="px-6 py-4">
                         <span
                           className={`px-3 py-1 text-xs font-semibold rounded-full ${getPositionColor(
-                            question.position_type
+                            question.category
                           )}`}
                         >
-                          {formatPositionType(question.position_type)}
+                          {formatPositionType(question.category)}
                         </span>
                       </td>
                       <td className="px-6 py-4">
@@ -776,17 +789,17 @@ export default function QuestionsPage() {
                 </select>
               </div>
 
-              {/* Position Type */}
+              {/* Job Category */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Position Type <span className="text-red-500">*</span>
+                  Job Category <span className="text-red-500">*</span>
                 </label>
                 <select
-                  value={formData.position_type_id}
-                  onChange={(e) => setFormData({ ...formData, position_type_id: parseInt(e.target.value) })}
+                  value={formData.category_id}
+                  onChange={(e) => setFormData({ ...formData, category_id: parseInt(e.target.value) })}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 >
-                  <option value="">Select Position Type</option>
+                  <option value="">Select Job Category</option>
                   {positionTypes.map((type) => (
                     <option key={type.id} value={type.id}>
                       {type.name}
@@ -795,68 +808,24 @@ export default function QuestionsPage() {
                 </select>
               </div>
 
-              {/* Tags / Subroles */}
+              {/* Competency (replaces tags/subroles) */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Tags / Subroles <span className="text-gray-400 text-xs">(optional)</span>
+                  Competency <span className="text-red-500">*</span>
                 </label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {formData.tags.length === 0 && <span className="text-sm text-gray-500">No tags added</span>}
-                  {formData.tags.map((tag) => (
-                    <span
-                      key={`tag-${tag}`}
-                      className="inline-flex items-center px-2 py-1 text-xs bg-indigo-100 text-indigo-700 rounded-full"
-                    >
-                      {tag}
-                      <button
-                        type="button"
-                        className="ml-2 text-indigo-800 hover:text-indigo-900"
-                        onClick={() =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            tags: prev.tags.filter((t) => t !== tag),
-                          }))
-                        }
-                      >
-                        ×
-                      </button>
-                    </span>
+                <select
+                  value={formData.competency}
+                  onChange={(e) => setFormData((prev) => ({ ...prev, competency: e.target.value }))}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  {COMPETENCY_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
                   ))}
-                </div>
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="text"
-                    value={newTag}
-                    onChange={(e) => setNewTag(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        const value = newTag.trim();
-                        if (value && !formData.tags.includes(value)) {
-                          setFormData((prev) => ({ ...prev, tags: [...prev.tags, value] }));
-                          setNewTag("");
-                        }
-                      }
-                    }}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                    placeholder='Add tag (e.g., "network", "sysadmin", "techsupport")'
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const value = newTag.trim();
-                      if (value && !formData.tags.includes(value)) {
-                        setFormData((prev) => ({ ...prev, tags: [...prev.tags, value] }));
-                        setNewTag("");
-                      }
-                    }}
-                    className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
-                  >
-                    Add
-                  </button>
-                </div>
+                </select>
                 <p className="text-xs text-gray-500 mt-1">
-                  Tags indicate what subroles this question applies to.
+                  Questions are competency-based for the Initial Interview; no manual tags or subroles needed.
                 </p>
               </div>
 

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Webcam from "react-webcam";
-import { interviewAPI, questionAPI } from "@/lib/api";
+import { interviewAPI, api } from "@/lib/api";
 import { getApplicantToken } from "@/app/utils/auth-applicant";
 import { useStore } from "@/store/useStore";
 import {
@@ -40,9 +40,10 @@ export default function InterviewPage() {
     setQuestions,
     currentQuestionIndex,
     nextQuestion,
-    previousQuestion,
-    recordedVideos,
     addRecordedVideo,
+    answeredQuestions,
+    setAnsweredQuestions,
+    markQuestionAnswered,
   } = useStore();
 
   const [interview, setInterview] = useState<Interview | null>(currentInterview);
@@ -60,167 +61,98 @@ export default function InterviewPage() {
   const [initialCountdown, setInitialCountdown] = useState(5);
   const [isSpeaking, setIsSpeaking] = useState(false);
 
-  // Load interview and questions
-  useEffect(() => {
-    const loadInterviewData = async () => {
-      try {
-        setIsLoading(true);
-
-        // Fetch interview details
-        const token = getApplicantToken();
-        console.log("DEBUG interviewId param:", interviewId);
-        console.log("DEBUG applicantToken:", token);
-        if (!token) {
-          router.push("/interview-login?missing=true");
-          return;
-        }
-        const interviewResponse = await interviewAPI.getInterview(interviewId, {
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
-        console.log("Interview Response:", interviewResponse.data);
-        const interviewData = interviewResponse.data.interview || interviewResponse.data;
-        console.log("Interview Data:", interviewData);
-
-        if (!interviewData || !interviewData.id) {
-          throw new Error("Invalid interview data received");
-        }
-
-        setInterview(interviewData);
-        setCurrentInterview(interviewData);
-
-        // Fetch questions (filter by position if available in interview data)
-        // interviewData.position_type is the code (e.g. "virtual_assistant")
-        const questionsResponse = await questionAPI.getQuestions(interviewId);
-
-        console.log("Questions Response:", questionsResponse.data);
-        let questionsData = questionsResponse.data.questions || questionsResponse.data;
-
-        // Handle paginated response
-        if (questionsData.results && Array.isArray(questionsData.results)) {
-          questionsData = questionsData.results;
-        }
-
-        // Ensure it's an array
-        if (!Array.isArray(questionsData)) {
-          console.error("Questions data is not an array:", questionsData);
-          throw new Error("Invalid questions data format");
-        }
-
-        // Randomize questions order and limit to 5 questions
-        const shuffledQuestions = [...questionsData].sort(() => Math.random() - 0.5).slice(0, 5); // Limit to 5 random questions
-
-        console.log(
-          `Questions loaded: ${questionsData.length} available, randomly selected ${shuffledQuestions.length}`
-        );
-        setQuestions(shuffledQuestions);
-
-        setIsLoading(false);
-
-        // Start initial countdown
-        startInitialCountdown();
-      } catch (err: any) {
-        console.error("Error loading interview:", err);
-        setError(err.response?.data?.message || err.message || "Failed to load interview. Please try again.");
-        setIsLoading(false);
-      }
-    };
-
-    loadInterviewData();
-  }, [interviewId, setCurrentInterview, setQuestions]);
-
-  // Initial countdown before first question
-  const startInitialCountdown = () => {
-    let countdown = 5;
-    setInitialCountdown(countdown);
-    setShowInitialCountdown(true);
-
-    const countdownInterval = setInterval(() => {
-      countdown--;
-      setInitialCountdown(countdown);
-
-      if (countdown <= 0) {
-        clearInterval(countdownInterval);
-        setShowInitialCountdown(false);
-        // Speak the first question after countdown
-        const firstQuestion = questions[0];
-        if (firstQuestion) {
-          speakQuestion(firstQuestion.question_text, firstQuestion.id);
-        }
-      }
-    }, 1000);
-  };
-
-  // Text-to-speech function
-  const speakQuestion = (text: string, questionId?: number) => {
-    if (!text) return;
-
-    // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.9; // Slightly slower for clarity
-    utterance.pitch = 1;
-    utterance.volume = 1;
-
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => {
-      setIsSpeaking(false);
-      // Auto-start recording after voice finishes (1 second delay)
-      setTimeout(() => {
-        // Get the question ID to check - use parameter if provided, otherwise current question
-        const qId = questionId || questions[currentQuestionIndex]?.id;
-        const alreadyRecorded = qId && recordedVideos[qId];
-
-        console.log("Auto-record check:", {
-          questionId: qId,
-          alreadyRecorded,
-          cameraReady,
-          isRecording,
-          currentQuestionIndex,
-        });
-
-        if (cameraReady && !isRecording && !alreadyRecorded) {
-          console.log("Auto-starting recording for question", qId);
-          startRecording();
-        } else {
-          console.log("Skipping auto-record:", { cameraReady, isRecording, alreadyRecorded });
-        }
-      }, 1000);
-    };
-    utterance.onerror = () => setIsSpeaking(false);
-
-    window.speechSynthesis.speak(utterance);
-  };
-
-  // Speak question when it changes
-  useEffect(() => {
-    if (!showInitialCountdown && !isTransitioning && questions[currentQuestionIndex]) {
-      // Small delay before speaking to let UI settle
-      const timer = setTimeout(() => {
-        const currentQuestion = questions[currentQuestionIndex];
-        speakQuestion(currentQuestion.question_text, currentQuestion.id);
-      }, 500);
-      return () => clearTimeout(timer);
-    }
-  }, [currentQuestionIndex, showInitialCountdown, isTransitioning, questions]);
-
-  // Recording timer
-  useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isRecording) {
-      interval = setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
-      }, 1000);
-    }
-    // Don't reset recording time when stopping - we need it for upload
-    return () => clearInterval(interval);
-  }, [isRecording]);
-
   const handleDataAvailable = useCallback(({ data }: BlobEvent) => {
     if (data.size > 0) {
       setRecordedChunks((prev) => [...prev, data]);
     }
   }, []);
+
+  // Load interview and questions
+  useEffect(() => {
+    if (!interviewId) return;
+
+    const fetchInterview = async () => {
+      setIsLoading(true);
+      setError("");
+
+      try {
+        const applicantToken = getApplicantToken();
+        const config = applicantToken
+          ? { headers: { Authorization: `Bearer ${applicantToken}` } }
+          : undefined;
+        const response = await interviewAPI.getInterview(interviewId, config);
+        const data = response.data;
+        const interview = data?.interview ?? data;
+
+        if (!interview) {
+          setError("Interview not found.");
+          return;
+        }
+
+        if (interview.status === "expired") {
+          setError("This interview has expired.");
+          return;
+        }
+
+        if (process.env.NODE_ENV !== "production" && interview.id && interview.id !== interviewId) {
+          console.error("Interview ID mismatch", { routeId: interviewId, payloadId: interview.id });
+        }
+
+        setInterview(interview);
+        setCurrentInterview(interview);
+
+        let interviewQuestions = Array.isArray(interview.questions) ? interview.questions : [];
+        if (process.env.NODE_ENV !== "production") {
+          interviewQuestions = interviewQuestions.slice(0, 5);
+        }
+        setQuestions(interviewQuestions);
+
+        // Sync answered questions from backend truth
+        const answeredIds = interview.answered_question_ids || [];
+        setAnsweredQuestions(answeredIds);
+
+        // Auto-advance to the first unanswered question
+        const firstUnansweredIndex = interviewQuestions.findIndex((q: InterviewQuestion) => !answeredIds.includes(q.id));
+        if (firstUnansweredIndex > 0) {
+          console.log("Auto-advancing to first unanswered question index:", firstUnansweredIndex);
+          setTimeout(() => {
+            useStore.getState().setCurrentQuestionIndex(firstUnansweredIndex);
+          }, 100);
+        } else if (firstUnansweredIndex === -1 && interviewQuestions.length > 0) {
+          setTimeout(() => {
+            useStore.getState().setCurrentQuestionIndex(interviewQuestions.length - 1);
+            setSuccessMessage("All questions have been answered.");
+          }, 100);
+        }
+
+        if (!interviewQuestions.length) {
+          setError("Interview questions are not available.");
+        }
+      } catch (err: any) {
+        if (err?.response?.status === 404) {
+          console.warn("Interview not found (404):", interviewId);
+          setError("Interview not found or no longer available.");
+          // Clear stale state from store
+          setInterview(null);
+          setCurrentInterview(null);
+          setQuestions([]);
+        } else {
+          console.error("Fetch interview error:", err);
+          setError(err?.message || "Failed to load interview.");
+        }
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchInterview();
+  }, [interviewId]);
+
+  useEffect(() => {
+    if (questions.length > 0 && showInitialCountdown) {
+      startInitialCountdown();
+    }
+  }, [questions.length]);
 
   const startRecording = useCallback(() => {
     if (!webcamRef.current?.stream) {
@@ -284,6 +216,96 @@ export default function InterviewPage() {
     console.log("MediaRecorder started with state:", mediaRecorder.state);
   }, [handleDataAvailable]);
 
+  // Initial countdown before first question
+  const startInitialCountdown = useCallback(() => {
+    let countdown = 5;
+    setInitialCountdown(countdown);
+    setShowInitialCountdown(true);
+
+    const countdownInterval = setInterval(() => {
+      countdown--;
+      setInitialCountdown(countdown);
+
+      if (countdown <= 0) {
+        clearInterval(countdownInterval);
+        setShowInitialCountdown(false);
+      }
+    }, 1000);
+  }, []);
+
+  // Text-to-speech function
+  const speakQuestion = useCallback((text: string, questionId?: number) => {
+    if (!text) return;
+
+    // Cancel any ongoing speech
+    window.speechSynthesis.cancel();
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.9; // Slightly slower for clarity
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    const voices = window.speechSynthesis.getVoices();
+    const femaleVoice = voices.find((voice) => /female|woman|wavenet[- ]?f/i.test(voice.name));
+    if (femaleVoice) {
+      utterance.voice = femaleVoice;
+    } else if (voices[0]) {
+      utterance.voice = voices[0];
+    }
+
+    utterance.onstart = () => setIsSpeaking(true);
+    utterance.onend = () => {
+      setIsSpeaking(false);
+      // Auto-start recording after voice finishes (1 second delay)
+        setTimeout(() => {
+        // Get the question ID to check - use parameter if provided, otherwise current question
+        const qId = questionId || questions[currentQuestionIndex]?.id;
+        const alreadyRecorded = qId && answeredQuestions.has(qId);
+
+        console.log("Auto-record check:", {
+          questionId: qId,
+          alreadyRecorded,
+          cameraReady,
+          isRecording,
+          currentQuestionIndex,
+        });
+
+        if (cameraReady && !isRecording && !alreadyRecorded) {
+          console.log("Auto-starting recording for question", qId);
+          startRecording();
+        } else {
+          console.log("Skipping auto-record:", { cameraReady, isRecording, alreadyRecorded });
+        }
+      }, 1000);
+    };
+    utterance.onerror = () => setIsSpeaking(false);
+
+    window.speechSynthesis.speak(utterance);
+  }, [questions, currentQuestionIndex, answeredQuestions, cameraReady, isRecording, startRecording]);
+
+  // Speak question when it changes
+  useEffect(() => {
+    if (!showInitialCountdown && !isTransitioning && questions[currentQuestionIndex]) {
+      // Small delay before speaking to let UI settle
+      const timer = setTimeout(() => {
+        const currentQuestion = questions[currentQuestionIndex];
+        speakQuestion(currentQuestion.question_text, currentQuestion.id);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [currentQuestionIndex, showInitialCountdown, isTransitioning, questions]);
+
+  // Recording timer
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isRecording) {
+      interval = setInterval(() => {
+        setRecordingTime((prev) => prev + 1);
+      }, 1000);
+    }
+    // Don't reset recording time when stopping - we need it for upload
+    return () => clearInterval(interval);
+  }, [isRecording]);
+
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
@@ -341,17 +363,24 @@ export default function InterviewPage() {
       }
 
       // Upload video (this includes AI processing on backend, takes 30-60 seconds)
-      await interviewAPI.uploadVideoResponse(interviewId, formData);
+      const uploadResponse = await interviewAPI.uploadVideoResponse(interviewId, formData);
 
-      console.log("Video uploaded successfully!");
+      console.log("Video uploaded successfully!", uploadResponse?.data);
 
-      // Store video blob in state
+      const transcript = uploadResponse?.data?.video_response?.transcript;
+      const errorDetail = uploadResponse?.data?.transcription_error;
+
+      if (!transcript || (typeof transcript === "string" && !transcript.trim())) {
+        console.warn("Transcript unavailable, continuing. Details:", errorDetail);
+      }
+
+      // Persist response locally
       addRecordedVideo(currentQuestion.id, blob);
+      const alreadyAnswered = answeredQuestions.has(currentQuestion.id);
+      markQuestionAnswered(currentQuestion.id);
 
       const isLastQuestion = currentQuestionIndex >= questions.length - 1;
-      // Calculate total answered AFTER adding to state - use the new count
-      const newRecordedVideos = { ...recordedVideos, [currentQuestion.id]: blob };
-      const totalAnswered = Object.keys(newRecordedVideos).length;
+      const totalAnswered = alreadyAnswered ? answeredQuestions.size : answeredQuestions.size + 1;
 
       console.log(
         `✓ Question ${currentQuestionIndex + 1} recorded. Total answered: ${totalAnswered} of ${questions.length}`
@@ -404,7 +433,11 @@ export default function InterviewPage() {
         err.message ||
         "Failed to upload video. Please try again.";
 
-      setError(`Upload failed: ${errorMessage}`);
+      if (err.response?.status === 404) {
+        setError("Upload failed: The interview session was not found on the server.");
+      } else {
+        setError(`Upload failed: ${errorMessage}`);
+      }
     } finally {
       setIsUploading(false);
     }
@@ -412,7 +445,7 @@ export default function InterviewPage() {
 
   const handleSubmitInterview = async (skipValidation = false) => {
     // Check if all questions are answered (unless skipping validation for auto-submit)
-    const answeredCount = Object.keys(recordedVideos).length;
+    const answeredCount = answeredQuestions.size;
     console.log(
       "handleSubmitInterview called - answered:",
       answeredCount,
@@ -428,14 +461,26 @@ export default function InterviewPage() {
       return;
     }
 
+    // Keep submit snappy for the applicant; disable button briefly to prevent double-clicks
     setIsSubmitting(true);
     setError("");
 
     try {
+      const applicantToken = getApplicantToken();
+      if (!applicantToken) {
+        setError("Unable to submit interview: missing applicant session. Please reopen your interview link.");
+        setIsSubmitting(false);
+        return;
+      }
+
       console.log("Submitting interview:", interviewId);
       console.log("Questions answered:", answeredCount, "of", questions.length);
 
-      await interviewAPI.submitInterview(interviewId);
+      await api.post(
+        `/public/interviews/${interviewId}/submit/`,
+        undefined,
+        { headers: { Authorization: `Bearer ${applicantToken}` } }
+      );
 
       console.log("Interview submitted successfully! Redirecting to completion page...");
       // Redirect to a friendly completion screen; user can then choose
@@ -484,7 +529,7 @@ export default function InterviewPage() {
     );
   }
 
-  if (!interview || !Array.isArray(questions) || questions.length === 0) {
+  if (!interview || !interview.id) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center max-w-md">
@@ -503,8 +548,8 @@ export default function InterviewPage() {
   }
 
   const currentQuestion = questions[currentQuestionIndex];
-  const isQuestionAnswered = currentQuestion ? !!recordedVideos[currentQuestion.id] : false;
-  const allQuestionsAnswered = Object.keys(recordedVideos).length === questions.length;
+  const isQuestionAnswered = currentQuestion ? answeredQuestions.has(currentQuestion.id) : false;
+  const allQuestionsAnswered = questions.length > 0 && answeredQuestions.size === questions.length;
 
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4 relative">
@@ -633,7 +678,7 @@ export default function InterviewPage() {
         )}
 
         {/* Welcome Message - First Question Only */}
-        {currentQuestionIndex === 0 && Object.keys(recordedVideos).length === 0 && (
+        {currentQuestionIndex === 0 && answeredQuestions.size === 0 && (
           <div className="bg-linear-to-r from-blue-600 to-purple-600 text-white rounded-lg shadow-lg p-6 mb-6">
             <h2 className="text-2xl font-bold mb-2">Welcome to Your AI Interview! 👋</h2>
             <p className="text-blue-50 mb-4">
@@ -669,7 +714,7 @@ export default function InterviewPage() {
             <div className="text-right">
               <div className="text-sm text-gray-600">Progress</div>
               <div className="text-2xl font-bold text-blue-600">
-                {Object.keys(recordedVideos).length}/{questions.length}
+                {answeredQuestions.size}/{questions.length}
               </div>
             </div>
           </div>
@@ -678,7 +723,7 @@ export default function InterviewPage() {
           <div className="w-full bg-gray-200 rounded-full h-2">
             <div
               className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-              style={{ width: `${(Object.keys(recordedVideos).length / questions.length) * 100}%` }}
+              style={{ width: `${(answeredQuestions.size / questions.length) * 100}%` }}
             />
           </div>
         </div>
@@ -807,9 +852,8 @@ export default function InterviewPage() {
           {/* Question Section */}
           <div className="bg-white rounded-lg shadow-md p-6">
             <div
-              className={`mb-6 transition-all duration-500 ${
-                isTransitioning ? "opacity-0 scale-95" : "opacity-100 scale-100"
-              }`}
+              className={`mb-6 transition-all duration-500 ${isTransitioning ? "opacity-0 scale-95" : "opacity-100 scale-100"
+                }`}
             >
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-gray-600">
@@ -882,7 +926,7 @@ export default function InterviewPage() {
             {/* Submission Status */}
             <div className="space-y-4">
               {/* Show completion message and explicit submit when all questions are answered */}
-              {Object.keys(recordedVideos).length === questions.length && (
+              {answeredQuestions.size === questions.length && (
                 <>
                   <div className="w-full bg-green-100 border-2 border-green-400 text-green-800 py-4 rounded-lg font-semibold flex items-center justify-center">
                     <CheckCircle className="w-6 h-6 mr-2" />
@@ -894,17 +938,8 @@ export default function InterviewPage() {
                     disabled={isSubmitting}
                     className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center"
                   >
-                    {isSubmitting ? (
-                      <>
-                        <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                        Submitting your interview...
-                      </>
-                    ) : (
-                      <>
-                        <Send className="w-5 h-5 mr-2" />
-                        Submit Interview
-                      </>
-                    )}
+                    <Send className="w-5 h-5 mr-2" />
+                    {isSubmitting ? "Submitting..." : "Submit Interview"}
                   </button>
                 </>
               )}

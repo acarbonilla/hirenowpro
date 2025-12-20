@@ -62,12 +62,18 @@ class InterviewSummarySerializer(serializers.Serializer):
     interview_id = serializers.IntegerField()
     interview_date = serializers.DateTimeField()
     submission_date = serializers.DateTimeField()
-    overall_score = serializers.FloatField()
-    recommendation = serializers.CharField()
+    overall_score = serializers.SerializerMethodField()
+    recommendation = serializers.SerializerMethodField()
     status = serializers.CharField()
     authenticity_flag = serializers.BooleanField()
     authenticity_status = serializers.CharField()
     authenticity_notes = serializers.CharField()
+
+    def get_overall_score(self, obj):
+        return getattr(obj, "final_score", getattr(obj, "score", None))
+
+    def get_recommendation(self, obj):
+        return getattr(obj, "ai_recommendation", None)
 
 
 class ApplicantInfoSerializer(serializers.Serializer):
@@ -92,7 +98,7 @@ class ScoreOverrideSerializer(serializers.Serializer):
     
     video_response_id = serializers.IntegerField(required=True)
     override_score = serializers.IntegerField(required=True, min_value=0, max_value=100)
-    comments = serializers.CharField(required=True, allow_blank=False)
+    comments = serializers.CharField(required=False, allow_blank=True)
     
     def validate_override_score(self, value):
         """Validate score is between 0-100"""
@@ -298,3 +304,106 @@ class FinalDecisionSerializer(serializers.Serializer):
         allow_blank=True,
         help_text="Optional notes about the decision"
     )
+
+
+class InterviewResultSummarySerializer(serializers.Serializer):
+    """
+    Summary-only serializer for HR results list.
+    WARNING: Do not add heavy fields (transcripts, breakdowns, notes) here.
+    """
+
+    id = serializers.IntegerField()
+    applicant_display_name = serializers.CharField(allow_blank=True, required=False)
+    created_at = serializers.DateTimeField()
+    score = serializers.FloatField()
+    passed = serializers.BooleanField()
+    hr_decision = serializers.CharField(allow_null=True, required=False)
+    hold_until = serializers.DateTimeField(allow_null=True, required=False)
+    final_decision = serializers.CharField(allow_null=True, required=False)
+    interview_status = serializers.CharField()
+    position_code = serializers.CharField(allow_null=True, required=False)
+
+
+class ReviewSummarySerializer(serializers.ModelSerializer):
+    """Resilient review summary serializer that maps to real model fields."""
+
+    overall_score = serializers.SerializerMethodField()
+    ai_overall_score = serializers.SerializerMethodField()
+    recommendation = serializers.SerializerMethodField()
+    applicant = serializers.SerializerMethodField()
+    hr_decision = serializers.CharField(read_only=True)
+    hr_decision_at = serializers.DateTimeField(read_only=True)
+    interview_id = serializers.IntegerField(source="interview.id", read_only=True)
+    created_at = serializers.DateTimeField(source="interview.created_at", read_only=True)
+
+    def get_overall_score(self, obj):
+        # Map to stored final score, fallback to any alternate attr
+        return getattr(obj, "final_score", None)
+
+    def get_ai_overall_score(self, obj):
+        interview = getattr(obj, "interview", None)
+        if not interview:
+            return None
+        total = 0.0
+        count = 0
+        for response in interview.video_responses.all():
+            ai_score = getattr(response, "ai_score", None)
+            if ai_score is None:
+                continue
+            try:
+                total += float(ai_score)
+                count += 1
+            except (TypeError, ValueError):
+                continue
+        if count == 0:
+            return None
+        return total / count
+
+    def get_recommendation(self, obj):
+        # Use SystemSettings thresholds; fallback to None if missing score
+        from .models import SystemSettings
+
+        score = getattr(obj, "final_score", None)
+        if score is None:
+            return None
+
+        passing = SystemSettings.get_passing_threshold()
+        review = SystemSettings.get_review_threshold()
+        if score >= passing:
+            return "hire"
+        if score >= review:
+            return "review"
+        return "reject"
+
+    def get_applicant(self, obj):
+        applicant = getattr(obj, "applicant", None) or getattr(obj.interview, "applicant", None)
+        if not applicant:
+            return None
+        return {
+            "id": getattr(applicant, "id", None),
+            "full_name": getattr(applicant, "full_name", None)
+            or f"{getattr(applicant, 'first_name', '')} {getattr(applicant, 'last_name', '')}".strip()
+            or None,
+            "email": getattr(applicant, "email", None),
+            "phone": getattr(applicant, "phone", None),
+        }
+
+    class Meta:
+        model = InterviewResult
+        fields = [
+            "id",
+            "interview_id",
+            "overall_score",
+            "ai_overall_score",
+            "passed",
+            "recommendation",
+            "hr_decision",
+            "hr_comment",
+            "hold_until",
+            "hr_decision_at",
+            "final_decision",
+            "final_decision_date",
+            "final_decision_notes",
+            "created_at",
+            "applicant",
+        ]

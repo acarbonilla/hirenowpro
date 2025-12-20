@@ -204,7 +204,7 @@ export default function ComparisonPage() {
         <div className="text-center">
           <p className="text-gray-500 text-lg">No comparison data available</p>
           <Link href="/hr-dashboard/results" className="text-blue-600 hover:text-blue-800 mt-4 inline-block">
-            Back to Results
+            Back to Interview Review
           </Link>
         </div>
       </div>
@@ -477,7 +477,7 @@ export default function ComparisonPage() {
           href="/hr-dashboard/results"
           className="px-6 py-3 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors font-medium"
         >
-          Back to All Results
+          Back to Interview Review
         </Link>
         <Link
           href={`/hr-dashboard/results/${resultId}/review`}

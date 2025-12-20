@@ -1,14 +1,14 @@
 from rest_framework import serializers
-from interviews.models import Interview, InterviewQuestion
-from interviews.type_models import PositionType
+from interviews.models import Interview, InterviewQuestion, JobPosition
 from interviews.type_serializers import JobCategorySerializer
 from applicants.models import Applicant
+from interviews.question_selection import select_questions_for_interview
 
 
 class PublicQuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = InterviewQuestion
-        fields = ["id", "question_text", "order", "tags"]
+        fields = ["id", "question_text", "order", "competency"]
 
 
 class PublicApplicantSerializer(serializers.ModelSerializer):
@@ -27,6 +27,7 @@ class PublicInterviewSerializer(serializers.ModelSerializer):
     questions = serializers.SerializerMethodField()
     category_detail = JobCategorySerializer(source="position_type", read_only=True)
     position_type = serializers.SerializerMethodField()
+    answered_question_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = Interview
@@ -38,13 +39,25 @@ class PublicInterviewSerializer(serializers.ModelSerializer):
             "status",
             "created_at",
             "questions",
+            "answered_question_ids",
         ]
 
     def get_position_type(self, obj):
         return obj.position_type.code if obj.position_type else None
 
     def get_questions(self, obj):
-        qs = InterviewQuestion.objects.filter(is_active=True).order_by("order")
-        if obj.position_type_id:
-            qs = qs.filter(category_id=obj.position_type_id)
+        if not obj.position_type_id:
+            return []
+        qs = select_questions_for_interview(obj)
         return PublicQuestionSerializer(qs, many=True).data
+
+    def get_answered_question_ids(self, obj):
+        return list(obj.video_responses.values_list('question_id', flat=True))
+
+
+class PublicJobPositionSerializer(serializers.ModelSerializer):
+    category_detail = JobCategorySerializer(source="category", read_only=True)
+
+    class Meta:
+        model = JobPosition
+        fields = ["id", "name", "code", "description", "category", "category_detail"]

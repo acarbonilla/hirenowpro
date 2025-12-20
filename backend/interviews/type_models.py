@@ -47,6 +47,11 @@ class PositionType(models.Model):
         blank=True,
         help_text="Qualifications for the role (optional)"
     )
+    description_context = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Brief context for this job category (scope, typical roles, interview focus)"
+    )
     is_active = models.BooleanField(
         default=True,
         help_text="Whether this position type is available for selection"

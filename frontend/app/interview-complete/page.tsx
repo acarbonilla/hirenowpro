@@ -1,31 +1,13 @@
 "use client";
 
 import { useSearchParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
-import { CheckCircle, Mail, Clock, Home } from "lucide-react";
-
-const MESSAGES = [
-  "Analyzing your communication skills...",
-  "Reviewing your responses for key strengths...",
-  "Summarizing your interview for HR...",
-  "Finalizing your interview report...",
-];
+import { CheckCircle, Mail, Home } from "lucide-react";
 
 export default function InterviewCompletePage() {
   const searchParams = useSearchParams();
   const router = useRouter();
 
   const interviewId = searchParams?.get("id") ?? null;
-
-  const [messageIndex, setMessageIndex] = useState(0);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setMessageIndex((prev) => (prev + 1) % MESSAGES.length);
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, []);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-600 to-blue-600 px-4">
@@ -36,31 +18,28 @@ export default function InterviewCompletePage() {
           </div>
         </div>
 
-        <h1 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-3">You&apos;re all done! 🎉</h1>
+        <h1 className="text-3xl md:text-4xl font-extrabold text-gray-900 mb-3">You&apos;re all done!</h1>
 
         <p className="text-lg text-gray-700 mb-6">
-          Thanks for completing your AI interview
-          {interviewId ? ` #${interviewId}` : ""}. We&apos;re now processing your responses.
+          Your interview{interviewId ? ` #${interviewId}` : ""} has been submitted successfully. Our system will analyze
+          your responses in the background.
         </p>
 
-        <div className="bg-blue-50 rounded-2xl p-5 mb-6 text-left flex items-start space-x-3">
-          <Clock className="w-6 h-6 text-blue-500 mt-1" />
-          <div>
-            <p className="font-semibold text-blue-900 mb-1">What&apos;s happening now</p>
-            <p className="text-blue-900/80 mb-1">{MESSAGES[messageIndex]}</p>
-            <p className="text-blue-900/70 text-sm">
-              Our system is preparing a report for the HR team. You don&apos;t need to wait here or keep this page open.
-            </p>
-          </div>
+        <div className="bg-blue-50 rounded-2xl p-5 mb-6 text-left">
+          <p className="font-semibold text-blue-900 mb-1">No need to wait here</p>
+          <p className="text-blue-900/80 text-sm">
+            Analysis runs in the background and can take a little while. You can close this page; we&apos;ll handle the
+            rest and the hiring team will review your results.
+          </p>
         </div>
 
-        <div className="bg-yellow-50 rounded-2xl p-5 mb-6 text-left flex items-start space-x-3">
-          <Mail className="w-6 h-6 text-yellow-500 mt-1" />
+        <div className="bg-green-50 rounded-2xl p-5 mb-6 text-left flex items-start space-x-3">
+          <Mail className="w-6 h-6 text-green-600 mt-1" />
           <div>
-            <p className="font-semibold text-yellow-900 mb-1">We&apos;ll let you know</p>
-            <p className="text-yellow-900/80 text-sm">
-              HR will review your results once the analysis is complete. You may receive an email or see updates in your
-              application portal.
+            <p className="font-semibold text-green-900 mb-1">What happens next</p>
+            <p className="text-green-900/80 text-sm">
+              We process your answers for the hiring team. If they need anything else, they&apos;ll reach out by email or
+              in your applicant portal.
             </p>
           </div>
         </div>

@@ -1,16 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
-import { applicantAPI, interviewAPI, api } from "@/lib/api";
+import { Suspense, useState, useEffect } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { applicantAPI, interviewAPI, api, publicAPI } from "@/lib/api";
 import { useStore } from "@/store/useStore";
 import { UserPlus, Mail, Phone, User, Loader2, MapPin } from "lucide-react";
 import { getCurrentLocation, GeolocationData } from "@/lib/geolocation";
 
-export default function RegisterPage() {
+function RegisterPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { setCurrentApplicant, setCurrentInterview } = useStore();
-  const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
+  const [positionCode, setPositionCode] = useState<string | null>(null);
+  const [positionTypeId, setPositionTypeId] = useState<number | null>(null);
+  const [jobPositionName, setJobPositionName] = useState<string | null>(null);
+  const [officeId, setOfficeId] = useState<number | null>(null);
 
   const [formData, setFormData] = useState({
     first_name: "",
@@ -21,20 +25,49 @@ export default function RegisterPage() {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingApplicationDetected, setPendingApplicationDetected] = useState(false);
   const [apiError, setApiError] = useState("");
   const [location, setLocation] = useState<GeolocationData | null>(null);
   const [locationSource, setLocationSource] = useState<"gps" | "ip" | "none">("none");
   const [locationError, setLocationError] = useState("");
   const [isGettingLocation, setIsGettingLocation] = useState(true);
 
-  // Check for position parameter on mount
+  // Resolve job position to position type on mount
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const position = params.get("position");
-    if (position) {
-      setSelectedPosition(position);
+    const jobPosition = searchParams.get("position");
+    const officeParam = searchParams.get("office");
+
+    if (!jobPosition) {
+      setApiError("Position is required. Please start from the positions page.");
+      setPositionCode(null);
+      setPositionTypeId(null);
+      setOfficeId(null);
+      return;
     }
-  }, []);
+
+    setPositionCode(jobPosition);
+    setOfficeId(officeParam ? Number(officeParam) : null);
+
+    const resolvePosition = async () => {
+      try {
+        const response = await publicAPI.get("/positions/", { params: { code: jobPosition } });
+        const data = response.data?.results?.[0] || response.data?.[0] || response.data;
+        if (data) {
+          const positionType = data.position_type?.id || data.id;
+          if (!positionType) {
+            setApiError("Position is invalid. Please start from the positions page.");
+            return;
+          }
+          setPositionTypeId(positionType);
+          setJobPositionName(data.name);
+        }
+      } catch (error) {
+        console.error("Failed to resolve job position:", error);
+        setApiError("Position lookup failed. Please start from the positions page.");
+      }
+    };
+    resolvePosition();
+  }, [searchParams]);
 
   // Get geolocation on component mount
   useEffect(() => {
@@ -130,6 +163,11 @@ export default function RegisterPage() {
       return;
     }
 
+    if (!positionCode || !positionTypeId) {
+      setApiError("Position is required. Please start from the positions page.");
+      return;
+    }
+
     setIsSubmitting(true);
     setApiError("");
 
@@ -143,6 +181,8 @@ export default function RegisterPage() {
         longitude: location?.longitude ?? null,
         is_onsite: locationSource === "gps",
         location_source: locationSource,
+        position_type_id: positionTypeId,
+        office_id: officeId,
         };
 
       console.log("Sending registration data:", registrationData);
@@ -151,7 +191,6 @@ export default function RegisterPage() {
       const applicantResponse = await applicantAPI.register(registrationData);
       const applicant = applicantResponse.data.applicant || applicantResponse.data;
       const token = applicantResponse.data.token;
-      const redirectUrl = applicantResponse.data.redirect_url;
 
       if (token) {
         localStorage.setItem("applicantToken", token);
@@ -159,62 +198,72 @@ export default function RegisterPage() {
 
       setCurrentApplicant(applicant);
 
-      // If position is selected, create interview and redirect directly
-      if (selectedPosition) {
-        try {
-          console.log("DEBUG selectedPosition:", selectedPosition);
-          console.log("DEBUG applicant:", applicant);
-
-          const posRes = await publicAPI.get("/position-types/", { params: { position_code: selectedPosition } });
-          const first = posRes.data?.results?.[0] || posRes.data?.[0];
-          const positionTypeId = first?.id;
-          console.log("DEBUG resolvedPositionType:", positionTypeId);
-          if (!positionTypeId) {
-            console.error("DEBUG position-types response:", posRes.data);
-            throw new Error("Unable to resolve position type ID");
-          }
-
-          const interviewResponse = await interviewAPI.createInterview({
-            applicant_id: applicant.id,
-            interview_type: "initial_ai",
-            position_code: selectedPosition,
-          });
-
-          console.log("DEBUG interviewResponse:", interviewResponse?.data);
-
-          const interview = interviewResponse.data.interview || interviewResponse.data;
-          console.log("Interview object:", interview);
-          console.log("Interview ID:", interview.id);
-
-          if (!interview || !interview.id) {
-            throw new Error("Invalid interview data received - no ID");
-          }
-
-          setCurrentInterview(interview);
-          console.log("Redirecting to interview:", interview.id);
-          router.push(`/interview/${interview.id}`);
+      // Create interview and redirect directly
+      try {
+        if (!positionCode || !positionTypeId) {
+          setApiError("Unable to resolve position. Please start from the positions page.");
           return;
-        } catch (error: any) {
-          console.error("Failed to create interview:", error);
-          console.error("Error response:", error.response?.data);
-          console.error("Error status:", error.response?.status);
-          // Fall back to position select if interview creation fails
         }
-      }
 
-      // Redirect using backend-provided redirect URL if available
-      if (redirectUrl) {
-        router.push(redirectUrl);
-      } else {
-        router.push(`/position-select?applicant_id=${applicant.id}`);
-      }
+        const finalPayload = {
+          applicant_id: applicant.id,
+          position_code: positionCode,
+          interview_type: "initial_ai",
+        };
+        console.log("DEBUG finalPayload:", finalPayload);
+
+        const interviewResponse = await interviewAPI.createInterview(finalPayload);
+
+        console.log("DEBUG interviewResponse:", interviewResponse);
+
+        if (!interviewResponse.data?.id) {
+          throw new Error("Interview ID missing from response");
+        }
+        const interviewId = interviewResponse.data?.id;
+        if (interviewResponse.status !== 201 || !interviewId) {
+          console.error("Invalid interview creation response:", interviewResponse);
+          setApiError("Unable to start interview. Please try again.");
+          return;
+        }
+
+        console.log("Redirecting to interview:", interviewId);
+        router.push(`/interview/${interviewId}`);
+        return;
+      } catch (error: any) {
+        console.error("Failed to create interview:", error);
+        console.error("Error response:", error.response?.data);
+        console.error("Error status:", error.response?.status);
+        setApiError("Unable to start interview. Please try again.");
+        return;
+      }
     } catch (error: any) {
-      console.error("Registration error:", error);
-      console.error("Error response data:", JSON.stringify(error.response?.data, null, 2));
-      console.error("Error status:", error.response?.status);
-
       if (error.response?.data) {
         const errorData = error.response.data;
+        const emailMessage = errorData?.details?.email?.[0] || "";
+
+        if (emailMessage.includes("currently being processed")) {
+          setPendingApplicationDetected(true);
+          setApiError("You already have an ongoing application. Please wait for the result.");
+          setIsSubmitting(false);
+
+          setTimeout(() => {
+            router.push("/application/status");
+          }, 2000);
+
+          return;
+        }
+
+        if (emailMessage.includes("You can reapply after")) {
+          setApiError(emailMessage);
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (emailMessage.includes("already hired")) {
+          setApiError("You are already hired. Please contact HR if you have any questions.");
+          setIsSubmitting(false);
+          return;
+        }
 
         // Handle field-specific errors from backend
         if (typeof errorData === "object" && !errorData.message && !errorData.error) {
@@ -235,13 +284,29 @@ export default function RegisterPage() {
             // No field errors, show the detail or generic message
             setApiError(errorData.detail || JSON.stringify(errorData) || "Registration failed. Please try again.");
           }
-        } else {
-          setApiError(
-            errorData.message || errorData.error || errorData.detail || "Registration failed. Please try again."
-          );
+          return;
         }
+
+        const message = errorData.message || errorData.error || errorData.detail || "";
+
+        if (message.includes("currently being processed")) {
+          setPendingApplicationDetected(true);
+          setApiError("You already have an ongoing application. Redirecting you to continue...");
+          setTimeout(() => {
+            router.push("/resume-application");
+          }, 1500);
+          return;
+        }
+
+        setApiError(
+          message || "We couldn't submit your application due to a system issue. Please try again later."
+        );
+        setIsSubmitting(false);
+        return;
       } else {
         setApiError("Unable to connect to server. Please check your connection and try again.");
+        setIsSubmitting(false);
+        return;
       }
     } finally {
       setIsSubmitting(false);
@@ -406,10 +471,25 @@ export default function RegisterPage() {
             )}
           </div>
 
+          {/* Position Display */}
+          {jobPositionName && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Position
+              </label>
+              <input
+                type="text"
+                value={jobPositionName}
+                readOnly
+                className="w-full px-4 py-2 border rounded-lg bg-gray-50 border-gray-300 text-gray-700"
+              />
+            </div>
+          )}
+
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={isSubmitting || pendingApplicationDetected}
             className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center"
           >
             {isSubmitting ? (
@@ -437,3 +517,15 @@ export default function RegisterPage() {
     </div>
   );
 }
+
+export default function RegisterPage() {
+  return (
+    <Suspense fallback={null}>
+      <RegisterPageContent />
+    </Suspense>
+  );
+}
+
+
+
+

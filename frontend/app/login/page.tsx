@@ -1,14 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { authAPI, interviewAPI, applicantAPI } from "@/lib/api";
-import { useStore } from "@/store/useStore";
+import { authAPI } from "@/lib/api";
+import { setHRAuth, clearHRAuth } from "@/lib/auth-hr";
 
 export default function LoginPage() {
   const router = useRouter();
-  const { setCurrentApplicant, setCurrentInterview } = useStore();
-  const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     username: "",
     password: "",
@@ -16,57 +14,35 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  // Check for position parameter on mount
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const position = params.get("position");
-    if (position) {
-      setSelectedPosition(position);
-    }
-  }, []);
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      const response = await authAPI.applicantLogin(formData);
+      const response = await authAPI.hrLogin(formData);
       const tokens = response.data.tokens || { access: response.data.access, refresh: response.data.refresh };
-      const user = response.data.user || response.data;
+      const user = response.data.user || response.data?.user_data || response.data?.profile || response.data;
 
-      // Store applicant tokens in localStorage
-      localStorage.removeItem("hr_access");
-      localStorage.removeItem("hr_refresh");
-      localStorage.setItem("applicant_access", tokens.access);
-      localStorage.setItem("applicant_refresh", tokens.refresh);
-      localStorage.setItem("applicant_user", JSON.stringify(user));
+      // Store HR tokens without overwriting applicant tokens
+      setHRAuth(tokens, user);
 
-      // If position is selected, create interview for this applicant
-      if (selectedPosition && user.id) {
-        try {
-          // Get applicant details
-          const applicantResponse = await applicantAPI.getApplicant(user.id);
-          const applicant = applicantResponse.data;
-          setCurrentApplicant(applicant);
+      // Validate HR access
+      const authCheck = await authAPI.checkAuth();
+      const perms = authCheck.data?.permissions || {};
+      const userType = authCheck.data?.user_type || authCheck.data?.user?.user_type || user?.user_type;
+      const isHR =
+        perms.is_hr_recruiter || perms.is_hr_manager || perms.is_superuser || userType?.startsWith("hr_");
 
-          // Create interview
-          const interviewResponse = await interviewAPI.create({
-            applicant_id: user.id,
-            position_type: selectedPosition,
-          });
-          const interview = interviewResponse.data;
-          setCurrentInterview(interview);
-          router.push(`/interview/${interview.id}`);
-          return;
-        } catch (error) {
-          console.error("Failed to create interview:", error);
-          // Fall back to dashboard if interview creation fails
-        }
+      if (!isHR) {
+        clearHRAuth();
+        setError("Access denied. HR credentials required.");
+        setLoading(false);
+        return;
       }
 
-      // Redirect to dashboard or home
-      router.push("/dashboard");
+      router.push("/hr-dashboard");
+      router.refresh();
     } catch (err: any) {
       setError(
         err.response?.data?.message || err.response?.data?.detail || "Login failed. Please check your credentials."

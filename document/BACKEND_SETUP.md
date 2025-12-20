@@ -45,6 +45,12 @@ HireNowPro is an AI-powered recruitment system that automates the initial interv
 9. Fail → Applicant waits 2-3 weeks before reapply
 ```
 
+### Initial Interview (Competency Screening)
+- Purpose: broad competency fit (communication, customer handling, problem explanation) with light category alignment (e.g., troubleshooting for IT Support).
+- Routing: questions are selected by controlled competencies, not free-text tags/subroles.
+- Safety: sales/upselling items are only eligible for Sales/Customer Service categories.
+- Deep technical validation is deferred to later interview stages/modules.
+
 ---
 
 ## Database Structure
@@ -417,7 +423,8 @@ Access at: http://localhost:8000/admin
 ### Start Celery Worker
 
 ```powershell
-celery -A core worker -l info
+python -m celery -A core.celery worker -l info -P solo
+# Windows dev: force solo pool; prefork is Linux-only and crashes on Python 3.13.
 ```
 
 ### Start Redis Server

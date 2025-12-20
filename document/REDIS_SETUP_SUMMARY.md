@@ -53,7 +53,8 @@ docker ps | Select-String redis
 ```powershell
 cd backend
 & .\venv\Scripts\Activate.ps1
-celery -A core worker --loglevel=info --pool=solo
+python -m celery -A core.celery worker -l info -P solo
+# Windows dev: use solo pool; prefork is Linux-only and breaks on Python 3.13.
 ```
 
 ---
@@ -85,7 +86,8 @@ exit
 ```powershell
 cd backend
 & .\venv\Scripts\Activate.ps1
-celery -A core worker --loglevel=info --pool=solo
+python -m celery -A core.celery worker -l info -P solo
+# Windows dev: use solo pool; prefork is Linux-only and breaks on Python 3.13.
 ```
 
 ---
@@ -324,7 +326,7 @@ cd backend
 python -c "import django; print('Django OK')"
 
 # Start worker from backend directory
-celery -A core worker --loglevel=info --pool=solo
+python -m celery -A core.celery worker -l info -P solo
 ```
 
 ### Issue: "Redis connection refused"

@@ -91,7 +91,7 @@ Automated installer that:
 
 1. Install Docker Desktop
 2. Run: `docker run -d -p 6379:6379 --name redis-hirenow redis:alpine`
-3. Run: `celery -A core worker --pool=solo`
+3. Run: `python -m celery -A core.celery worker -l info -P solo` (Windows solo pool; prefork is Linux-only)
 
 **Result:** Instant submit (1-2 seconds)
 
@@ -107,7 +107,7 @@ Automated installer that:
 
 1. Enable WSL: `wsl --install`
 2. Run: `wsl sudo apt install redis-server -y`
-3. Run: `celery -A core worker --pool=solo`
+3. Run: `python -m celery -A core.celery worker -l info -P solo` (solo required on Windows)
 
 **Result:** Instant submit (1-2 seconds)
 

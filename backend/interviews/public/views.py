@@ -1,22 +1,31 @@
-from rest_framework import generics, status
+import logging
+import time
+from rest_framework import generics, status, viewsets
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
-from interviews.models import Interview, InterviewQuestion
+from django.utils import timezone
+from django.db import transaction
+from interviews.models import Interview, InterviewQuestion, JobPosition, VideoResponse
 from interviews.type_models import PositionType
 from interviews.type_serializers import JobCategorySerializer
-from interviews.models import JobPosition
+from interviews.serializers import InterviewSerializer, VideoResponseCreateSerializer
 from applicants.models import Applicant
-from rest_framework import viewsets
 from .serializers import (
     PublicInterviewSerializer,
-    PublicQuestionSerializer,
+    PublicJobPositionSerializer,
 )
+from interviews.tasks import process_complete_interview
+
+logger = logging.getLogger(__name__)
 
 
 class PublicInterviewCreateView(generics.CreateAPIView):
     permission_classes = [AllowAny]
-    serializer_class = PublicInterviewSerializer
+    authentication_classes = []
+    serializer_class = InterviewSerializer
 
     def create(self, request, *args, **kwargs):
         applicant_id = request.data.get("applicant_id")
@@ -30,7 +39,10 @@ class PublicInterviewCreateView(generics.CreateAPIView):
 
         position_type = PositionType.objects.filter(code=position_code).first()
         if not position_type:
-            return Response({"error": "Position type not found"}, status=status.HTTP_400_BAD_REQUEST)
+            job_position = JobPosition.objects.filter(code=position_code).select_related("category").first()
+            position_type = job_position.category if job_position and job_position.category else None
+        if not position_type:
+            raise ValidationError({"position_code": "Position type not found"})
 
         interview = Interview.objects.create(
             applicant=applicant,
@@ -38,26 +50,127 @@ class PublicInterviewCreateView(generics.CreateAPIView):
             interview_type=interview_type,
             status="pending",
         )
+        if not interview:
+            return Response({"error": "Interview creation failed"}, status=status.HTTP_400_BAD_REQUEST)
+        if not Interview.objects.filter(id=interview.id).exists():
+            return Response({"error": "Interview creation failed"}, status=status.HTTP_400_BAD_REQUEST)
+        print("INTERVIEW CREATED:", interview.id)
         serializer = self.get_serializer(interview)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
 
-class PublicInterviewRetrieveView(generics.RetrieveAPIView):
+class PublicInterviewViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]
-    queryset = Interview.objects.select_related("position_type")
+    authentication_classes = []
     serializer_class = PublicInterviewSerializer
+    queryset = Interview.objects.select_related("position_type", "applicant")
 
+    def retrieve(self, request, *args, **kwargs):
+        interview = self.get_object()
+        serializer = self.get_serializer(interview)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 
-class PublicQuestionListView(generics.ListAPIView):
-    permission_classes = [AllowAny]
-    serializer_class = PublicQuestionSerializer
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="video-response",
+        permission_classes=[AllowAny],
+        authentication_classes=[],
+    )
+    def video_response(self, request, pk=None):
+        interview = self.get_object()
 
-    def get_queryset(self):
-        interview = get_object_or_404(Interview, id=self.kwargs.get("pk"))
-        qs = InterviewQuestion.objects.filter(is_active=True).order_by("order")
-        if interview.position_type_id:
-            qs = qs.filter(category_id=interview.position_type_id)
-        return qs
+        if interview.status in ["submitted", "processing", "completed"]:
+            return Response({"error": "Interview already submitted or completed"}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = VideoResponseCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        question_id = serializer.validated_data.get("question_id")
+        question = get_object_or_404(InterviewQuestion, id=question_id, is_active=True)
+
+        existing_response = VideoResponse.objects.filter(interview=interview, question=question).first()
+        if existing_response:
+            return Response({"error": "A response for this question already exists"}, status=status.HTTP_400_BAD_REQUEST)
+
+        video_response = VideoResponse.objects.create(
+            interview=interview,
+            question=question,
+            video_file_path=serializer.validated_data["video_file_path"],
+            duration=serializer.validated_data["duration"],
+            status="uploaded",
+        )
+
+        transcript_error = None
+        transcript_text = ""
+
+        try:
+            from interviews.deepgram_service import get_deepgram_service
+
+            deepgram_service = get_deepgram_service()
+            transcript_data = deepgram_service.transcribe_video(
+                video_response.video_file_path.path, video_response_id=video_response.id
+            )
+            transcript_text = transcript_data.get("transcript", "") or ""
+            video_response.transcript = transcript_text
+            video_response.save()
+        except Exception as exc:  # noqa: BLE001 - log and return consistent contract
+            transcript_error = str(exc)
+            transcript_text = ""
+            video_response.transcript = ""
+            video_response.save()
+
+        response_payload = {
+            "video_response": {
+                "id": video_response.id,
+                "question_id": video_response.question_id,
+                "transcript": transcript_text,
+                "status": video_response.status,
+            },
+            "transcript_ready": bool(transcript_text),
+            "transcription_error": transcript_error,
+        }
+
+        return Response(response_payload, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="submit",
+        permission_classes=[AllowAny],
+        authentication_classes=[],
+    )
+    def submit(self, request, pk=None):
+        start_time = time.monotonic()
+        interview = self.get_object()
+
+        if interview.status != "pending":
+            return Response({"detail": "Interview already submitted."}, status=status.HTTP_400_BAD_REQUEST)
+
+        logger.info("Interview %s submission received", interview.id)
+        interview.status = "processing"
+        interview.submission_date = timezone.now()
+        interview.save(update_fields=["status", "submission_date"])
+
+        # Create processing queue entry for visibility (best-effort)
+        try:
+            from processing.models import ProcessingQueue
+
+            ProcessingQueue.objects.create(
+                interview=interview,
+                processing_type="bulk_analysis",
+                status="pending",
+            )
+        except Exception:
+            logger.exception("Failed to create processing queue entry for interview %s", interview.id)
+
+        # Enqueue AI analysis after transaction commits to avoid orphan tasks
+        transaction.on_commit(lambda: process_complete_interview.delay(interview.id))
+
+        elapsed_ms = int((time.monotonic() - start_time) * 1000)
+        logger.info("Interview %s submit completed in %sms", interview.id, elapsed_ms)
+
+        return Response({"detail": "Interview submitted successfully."}, status=status.HTTP_200_OK)
 
 
 class PublicPositionTypeLookupView(generics.ListAPIView):
@@ -106,4 +219,22 @@ class PublicPositionTypeViewSet(viewsets.ReadOnlyModelViewSet):
                 job_position = JobPosition.objects.filter(code=position_code).select_related("category").first()
                 if job_position and job_position.category:
                     qs = PositionType.objects.filter(id=job_position.category_id)
+        return qs
+
+
+class PublicJobPositionViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Public-facing viewset for job positions. No authentication required.
+    """
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    serializer_class = PublicJobPositionSerializer
+    queryset = JobPosition.objects.select_related("category").filter(is_active=True)
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        code = self.request.query_params.get("code")
+        if code:
+            qs = qs.filter(code=code)
         return qs

@@ -1,10 +1,12 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from accounts.permissions import IsHR
-from accounts.authentication import generate_applicant_token
-from django.db.models import Q
+from accounts.permissions import IsApplicant
+from common.permissions import IsHRUser
+from accounts.authentication import generate_applicant_token, ApplicantTokenAuthentication
+from django.db.models import Q, OuterRef, Subquery, Exists, Value, Case, When, BooleanField, CharField
+from django.utils import timezone
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 
@@ -52,37 +54,124 @@ class ApplicantViewSet(viewsets.ModelViewSet):
         """Allow anyone to create; restrict management to HR"""
         if self.action in ['create']:
             return [AllowAny()]
-        return [IsAuthenticated(), IsHR()]
+        return [IsAuthenticated(), IsHRUser()]
     
     def get_queryset(self):
         """Filter applicants with relationship optimization based on query parameters"""
-        # Optimize common relations to avoid N+1 queries in lists
-        queryset = super().get_queryset().prefetch_related(
-            'interviews',
-            'results'
+        from interviews.models import Interview
+        from results.models import InterviewResult
+
+        ACTIVE_INTERVIEW_STATUSES = ["pending", "in_progress", "submitted", "processing"]
+        COMPLETED_INTERVIEW_STATUSES = ["completed", "failed"]
+        FAILED_STATUSES = ["failed", "failed_training", "failed_onboarding"]
+
+        today = timezone.localdate()
+
+        latest_interview = Interview.objects.filter(applicant=OuterRef("pk")).order_by("-created_at")
+        latest_result = InterviewResult.objects.filter(applicant=OuterRef("pk")).order_by("-interview__created_at")
+
+        queryset = (
+            super()
+            .get_queryset()
+            .annotate(
+                latest_interview_status=Subquery(latest_interview.values("status")[:1]),
+                latest_interview_decision=Subquery(latest_interview.values("hr_decision")[:1]),
+                latest_position_name=Subquery(latest_interview.values("position_type__name")[:1]),
+                has_interview=Exists(Interview.objects.filter(applicant=OuterRef("pk"))),
+                has_active_interview=Exists(
+                    Interview.objects.filter(applicant=OuterRef("pk"), status__in=ACTIVE_INTERVIEW_STATUSES)
+                ),
+                has_pending_review=Case(
+                    When(
+                        latest_interview_status__in=COMPLETED_INTERVIEW_STATUSES,
+                        latest_interview_decision__isnull=True,
+                        then=Value(True),
+                    ),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                ),
+                needs_hr_action=Case(
+                    When(
+                        latest_interview_status__in=COMPLETED_INTERVIEW_STATUSES,
+                        latest_interview_decision__isnull=True,
+                        then=Value(True),
+                    ),
+                    default=Value(False),
+                    output_field=BooleanField(),
+                ),
+                latest_result_id=Subquery(latest_result.values("id")[:1]),
+                applicant_status_key=Case(
+                    When(has_interview=False, then=Value("no_interview")),
+                    When(has_active_interview=True, then=Value("interview_in_progress")),
+                    When(
+                        latest_interview_status__in=COMPLETED_INTERVIEW_STATUSES,
+                        latest_interview_decision__isnull=True,
+                        then=Value("pending_hr_decision"),
+                    ),
+                    When(status="hired", then=Value("hired")),
+                    When(
+                        status__in=FAILED_STATUSES,
+                        reapplication_date__gt=today,
+                        then=Value("failed_cooldown"),
+                    ),
+                    When(
+                        status__in=FAILED_STATUSES,
+                        reapplication_date__lte=today,
+                        then=Value("eligible_reapply"),
+                    ),
+                    When(
+                        status__in=FAILED_STATUSES,
+                        reapplication_date__isnull=True,
+                        then=Value("eligible_reapply"),
+                    ),
+                    default=Value("interview_in_progress"),
+                    output_field=CharField(),
+                ),
+            )
         )
-        
-        # Filter by status
-        status_param = self.request.query_params.get('status', None)
+
+        # Search by name, email, or applicant ID
+        search = (self.request.query_params.get("search") or "").strip()
+        if search:
+            search_filter = (
+                Q(first_name__icontains=search)
+                | Q(last_name__icontains=search)
+                | Q(email__icontains=search)
+            )
+            if search.isdigit():
+                search_filter |= Q(id=int(search))
+            queryset = queryset.filter(search_filter)
+
+        # Filter by applicant status (derived)
+        applicant_status = self.request.query_params.get("applicant_status")
+        if applicant_status:
+            queryset = queryset.filter(applicant_status_key=applicant_status)
+
+        # Filter by action required (derived)
+        action_required = (self.request.query_params.get("action_required") or "").lower()
+        if action_required in {"true", "false"}:
+            queryset = queryset.filter(needs_hr_action=(action_required == "true"))
+
+        # Backward-compatible filters
+        status_param = self.request.query_params.get("status")
         if status_param:
             queryset = queryset.filter(status=status_param)
-        
-        # Filter by application source
-        source = self.request.query_params.get('source', None)
+
+        source = self.request.query_params.get("source")
         if source:
             queryset = queryset.filter(application_source=source)
-        
-        # Search by name or email
-        search = self.request.query_params.get('search', None)
-        if search:
-            queryset = queryset.filter(
-                Q(first_name__icontains=search) |
-                Q(last_name__icontains=search) |
-                Q(email__icontains=search)
-            )
-        
+
+        # Filter by application date range
+        date_from = self.request.query_params.get("date_from")
+        if date_from:
+            queryset = queryset.filter(application_date__gte=date_from)
+
+        date_to = self.request.query_params.get("date_to")
+        if date_to:
+            queryset = queryset.filter(application_date__lte=date_to)
+
         # Always return most recent first
-        return queryset.order_by('-application_date')
+        return queryset.order_by("-application_date")
     
     def create(self, request, *args, **kwargs):
         """Create new applicant"""
@@ -108,7 +197,7 @@ class ApplicantViewSet(viewsets.ModelViewSet):
             
             # Generate applicant token for passwordless interview access
             token = generate_applicant_token(applicant.id)
-            redirect_url = f"/interview/{applicant.id}"
+            redirect_url = f"/position-select?applicant_id={applicant.id}"
 
             response_serializer = ApplicantSerializer(applicant)
             return Response(
@@ -320,3 +409,18 @@ class ApplicantViewSet(viewsets.ModelViewSet):
         applicant = self.get_object()
         serializer = ApplicantDetailHistorySerializer(applicant)
         return Response(serializer.data)
+
+
+class ApplicantSelfViewSet(mixins.RetrieveModelMixin, mixins.UpdateModelMixin, viewsets.GenericViewSet):
+    """
+    Applicant-facing profile endpoints (uses applicant token authentication).
+    """
+
+    serializer_class = ApplicantSerializer
+    authentication_classes = [ApplicantTokenAuthentication]
+    permission_classes = [IsApplicant]
+    queryset = Applicant.objects.all()
+
+    def get_object(self):
+        # For applicant tokens, request.user is the Applicant instance.
+        return getattr(self.request, "user", None)

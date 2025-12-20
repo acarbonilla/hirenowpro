@@ -21,8 +21,7 @@ interface Position {
   required_skills?: string;
   qualifications?: string;
   category?: number | null;
-  category_detail?: { id: number; name: string };
-  subroles?: string[];
+  category_detail?: { id: number; name: string; description_context?: string | null };
   offices_detail?: {
     id: number;
     name: string;
@@ -37,9 +36,9 @@ export default function PositionsManagementPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
   const [officesOptions, setOfficesOptions] = useState<{ id: number; name: string; address?: string }[]>([]);
-  const [categoriesOptions, setCategoriesOptions] = useState<{ id: number; name: string }[]>([]);
-  const [newSubrole, setNewSubrole] = useState("");
-
+  const [categoriesOptions, setCategoriesOptions] = useState<
+    { id: number; name: string; description_context?: string | null }[]
+  >([]);
   const [formData, setFormData] = useState({
     code: "",
     name: "",
@@ -52,9 +51,9 @@ export default function PositionsManagementPage() {
     is_active: true,
     order: 0,
     category: null as number | null,
-    subroles: [] as string[],
     offices: [] as number[],
   });
+  const selectedCategory = categoriesOptions.find((c) => c.id === (formData.category ?? -1));
 
   useEffect(() => {
     fetchPositions();
@@ -116,13 +115,12 @@ export default function PositionsManagementPage() {
       salary: "",
       key_responsibilities: "",
       required_skills: "",
-      qualifications: "",
-      is_active: true,
-      order: positions.length,
-      category: null,
-      subroles: [],
-      offices: [],
-    });
+    qualifications: "",
+    is_active: true,
+    order: positions.length,
+    category: null,
+    offices: [],
+  });
     setEditingPosition(null);
     setShowAddModal(true);
   };
@@ -146,12 +144,11 @@ export default function PositionsManagementPage() {
       key_responsibilities: position.key_responsibilities || "",
       required_skills: position.required_skills || "",
       qualifications: position.qualifications || "",
-      is_active: position.is_active,
-      order: position.order,
-      category: position.category_detail?.id ?? null,
-      subroles: position.subroles || [],
-      offices: (position.offices_detail || []).map((o) => Number(o.id)),
-    });
+    is_active: position.is_active,
+    order: position.order,
+    category: position.category_detail?.id ?? null,
+    offices: (position.offices_detail || []).map((o) => Number(o.id)),
+  });
     setEditingPosition(position);
     setShowAddModal(true);
   };
@@ -169,7 +166,6 @@ export default function PositionsManagementPage() {
         ...formData,
         offices: Array.isArray(formData.offices) ? formData.offices.map((id) => Number(id)) : [],
         category: formData.category !== null ? Number(formData.category) : null,
-        subroles: Array.isArray(formData.subroles) ? formData.subroles : [],
       };
 
       if (editingPosition) {
@@ -423,76 +419,15 @@ export default function PositionsManagementPage() {
                     </option>
                   ))}
                 </select>
+                <p className="text-xs text-gray-500 mt-1 min-h-[1.5rem]">
+                  {selectedCategory?.description_context
+                    ? selectedCategory.description_context
+                    : "Add a category description to guide HR on scope and interview focus."}
+                </p>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Subroles / Tags</label>
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {formData.subroles.length === 0 && <span className="text-sm text-gray-500">No subroles added</span>}
-                  {formData.subroles.map((tag) => (
-                    <span
-                      key={`subrole-${tag}`}
-                      className="inline-flex items-center px-2 py-1 text-xs bg-indigo-100 text-indigo-700 rounded-full"
-                    >
-                      {tag}
-                      <button
-                        type="button"
-                        className="ml-2 text-indigo-800 hover:text-indigo-900"
-                        onClick={() =>
-                          setFormData((prev) => ({
-                            ...prev,
-                            subroles: prev.subroles.filter((t) => t !== tag),
-                          }))
-                        }
-                      >
-                        ×
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                <div className="flex items-center space-x-3">
-                  <input
-                    type="text"
-                    value={newSubrole}
-                    onChange={(e) => setNewSubrole(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        e.preventDefault();
-                        const value = newSubrole.trim();
-                        if (value && !formData.subroles.includes(value)) {
-                          setFormData((prev) => ({ ...prev, subroles: [...prev.subroles, value] }));
-                          setNewSubrole("");
-                        }
-                      }
-                    }}
-                    list="subrole-options"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    placeholder='Add subrole (e.g., "network", "sysadmin", "techsupport")'
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const value = newSubrole.trim();
-                      if (value && !formData.subroles.includes(value)) {
-                        setFormData((prev) => ({ ...prev, subroles: [...prev.subroles, value] }));
-                        setNewSubrole("");
-                      }
-                    }}
-                    className="px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition"
-                  >
-                    Add
-                  </button>
-                  <datalist id="subrole-options">
-                    <option value="network" />
-                    <option value="sysadmin" />
-                    <option value="techsupport" />
-                    <option value="databases" />
-                    <option value="cloud" />
-                  </datalist>
-                </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Subroles determine which specialized questions this job requires.
-                </p>
+              <div className="text-xs text-gray-500">
+                Questions are competency-based for the Initial Interview; subroles are no longer required for positions.
               </div>
 
               <div>

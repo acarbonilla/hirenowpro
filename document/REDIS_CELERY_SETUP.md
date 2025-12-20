@@ -86,6 +86,8 @@ REDIS_DB=0
 # Celery Configuration (same as Redis by default)
 CELERY_BROKER_URL=redis://localhost:6379/0
 CELERY_RESULT_BACKEND=redis://localhost:6379/0
+# Optional (dev on Windows): force solo pool to avoid prefork crash
+# CELERY_WORKER_POOL=solo
 ```
 
 **For cloud deployments (e.g., Railway, Heroku, AWS):**
@@ -101,11 +103,14 @@ CELERY_RESULT_BACKEND=redis://your-redis-host:6379/0
 ```bash
 cd backend
 
-# Single worker (simple)
+# Linux/production (prefork pool)
 celery -A core worker --loglevel=info
 
-# Multiple workers (better performance)
+# Linux/production with more workers
 celery -A core worker --loglevel=info --concurrency=4
+
+# Windows development: force solo pool to avoid Python 3.13 prefork crash
+python -m celery -A core.celery worker -l info -P solo
 
 # With beat scheduler (for periodic tasks)
 celery -A core worker --loglevel=info --beat
@@ -245,10 +250,10 @@ python manage.py runserver
 
 ```powershell
 cd backend
-celery -A core worker --loglevel=info --pool=solo
+python -m celery -A core.celery worker -l info -P solo
 ```
 
-> **Note:** Use `--pool=solo` on Windows. On Linux/macOS, omit it or use `--pool=prefork`.
+> **Note:** Windows dev: `-P solo` is required (prefork crashes on Python 3.13). Linux/macOS can use the default prefork pool.
 
 **Terminal 3: Frontend (optional)**
 
@@ -428,7 +433,7 @@ ps aux | grep celery
 
 # Restart worker with verbose logging
 cd backend
-celery -A core worker --loglevel=debug --pool=solo
+python -m celery -A core.celery worker -l debug -P solo
 ```
 
 ### Issue: Tasks fail with "ModuleNotFoundError"

@@ -35,6 +35,14 @@ export interface InterviewQuestion {
   question_text: string;
   question_type: "technical" | "behavioral" | "situational" | "general";
   order: number;
+  competency:
+    | "communication"
+    | "customer_handling"
+    | "problem_explanation"
+    | "troubleshooting"
+    | "technical_reasoning"
+    | "networking_concepts"
+    | "sales_upselling";
 }
 
 export interface VideoResponse {
@@ -65,11 +73,13 @@ export interface Interview {
   id: number;
   applicant: Applicant;
   interview_type: "initial_ai" | "technical" | "final";
-  status: "pending" | "in_progress" | "completed" | "failed";
+  status: "pending" | "in_progress" | "submitted" | "processing" | "completed" | "failed";
   created_at: string;
   completed_at?: string | null;
+  position_type?: string | null;
   questions?: InterviewQuestion[];
   video_responses?: VideoResponse[];
+  answered_question_ids?: number[];
 }
 
 export interface InterviewAnalysis {

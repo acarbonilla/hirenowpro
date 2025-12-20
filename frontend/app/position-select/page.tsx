@@ -1,8 +1,8 @@
 "use client";
 
 import React, { Suspense, useState, useEffect } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { applicantAPI, interviewAPI, questionAPI, api, publicAPI } from "@/lib/api";
+import { useRouter } from "next/navigation";
+import { interviewAPI, publicAPI } from "@/lib/api";
 import { useStore } from "@/store/useStore";
 import { Briefcase, Headphones, Monitor, TrendingUp, Users, Info, ArrowRight, Loader2 } from "lucide-react";
 
@@ -82,33 +82,13 @@ function PositionSelectPageInner() {
   const [error, setError] = useState("");
 
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const { currentApplicant, setCurrentApplicant, setCurrentInterview } = useStore();
-
-  const applicantId = searchParams.get("applicant_id");
+  const { currentApplicant, setCurrentInterview } = useStore();
 
   useEffect(() => {
-    // Redirect if no applicant_id
-    if (!applicantId && !currentApplicant) {
+    if (!currentApplicant) {
       router.push("/register");
     }
-  }, [applicantId, currentApplicant, router]);
-
-  useEffect(() => {
-    const loadApplicant = async () => {
-      if (!currentApplicant && applicantId) {
-        try {
-          const response = await applicantAPI.getApplicant(parseInt(applicantId, 10));
-          const applicant = response.data.applicant || response.data;
-          setCurrentApplicant(applicant);
-        } catch (error) {
-          console.error("Failed to fetch applicant for geo status banner", error);
-        }
-      }
-    };
-
-    loadApplicant();
-  }, [applicantId, currentApplicant, setCurrentApplicant]);
+  }, [currentApplicant, router]);
 
   const handleSelectPosition = (positionCode: string) => {
     setError("");
@@ -125,7 +105,7 @@ function PositionSelectPageInner() {
     setError("");
 
     try {
-      const appId = applicantId || currentApplicant?.id;
+      const appId = currentApplicant?.id;
 
       if (!appId) {
         throw new Error("Applicant ID not found");
@@ -138,11 +118,14 @@ function PositionSelectPageInner() {
       if (!positionTypeId) throw new Error("Position type not found");
 
       const interviewResponse = await interviewAPI.createInterview({
-        applicant_id: typeof appId === "string" ? parseInt(appId) : (appId as number),
+        applicant_id: appId,
         interview_type: "initial_ai",
         position_code: selectedPosition,
       });
       const interview = interviewResponse.data.interview || interviewResponse.data;
+      if (!interview?.id) {
+        throw new Error("Interview ID missing from response");
+      }
 
       setCurrentInterview(interview);
 

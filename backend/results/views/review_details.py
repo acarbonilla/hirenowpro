@@ -1,0 +1,76 @@
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from django.shortcuts import get_object_or_404
+
+from results.models import InterviewResult
+from interviews.models import VideoResponse
+from common.permissions import IsHRUser
+
+
+class InterviewReviewDetails(APIView):
+    """
+    Heavy interview review details (AI analysis, transcripts, per-question data).
+    """
+
+    permission_classes = [IsAuthenticated, IsHRUser]
+
+    def get(self, request, pk):
+        result = get_object_or_404(
+            InterviewResult.objects.select_related("interview"),
+            pk=pk,
+        )
+        interview = result.interview
+
+        # Prefetch video responses with related question and ai_analysis
+        video_responses = (
+            VideoResponse.objects.filter(interview=interview)
+            .select_related("question", "hr_reviewer", "ai_analysis")
+            .order_by("question__order")
+        )
+
+        videos_payload = []
+        for vr in video_responses:
+            ai_assessment = ""
+            ai_scoring = {
+                "sentiment_score": None,
+                "confidence_score": None,
+                "speech_clarity_score": None,
+                "content_relevance_score": None,
+                "overall_score": None,
+            }
+            if getattr(vr, "ai_analysis", None):
+                analysis_data = vr.ai_analysis.langchain_analysis_data
+                ai_assessment = analysis_data.get("analysis_summary", "") or analysis_data.get("raw_scores", {}).get(
+                    "analysis_summary", ""
+                )
+                ai_scoring = {
+                    "sentiment_score": getattr(vr.ai_analysis, "sentiment_score", None),
+                    "confidence_score": getattr(vr.ai_analysis, "confidence_score", None),
+                    "speech_clarity_score": getattr(vr.ai_analysis, "speech_clarity_score", None),
+                    "content_relevance_score": getattr(vr.ai_analysis, "content_relevance_score", None),
+                    "overall_score": getattr(vr.ai_analysis, "overall_score", None),
+                }
+
+            videos_payload.append(
+                {
+                    "id": vr.id,
+                    "question": {
+                        "id": vr.question.id,
+                        "question_text": vr.question.question_text,
+                        "question_type": vr.question.question_type.name if vr.question.question_type else None,
+                        "order": vr.question.order,
+                    },
+                    "video_file": vr.video_file_path.url if vr.video_file_path else None,
+                    "transcript": vr.transcript or "",
+                    "ai_score": vr.ai_score or 0,
+                    "ai_assessment": ai_assessment,
+                    "ai_scoring": ai_scoring,
+                    "sentiment": vr.sentiment or "",
+                    "hr_override_score": vr.hr_override_score,
+                    "hr_comments": vr.hr_comments,
+                    "status": vr.status if hasattr(vr, "status") else "completed",
+                }
+            )
+
+        return Response({"video_responses": videos_payload})

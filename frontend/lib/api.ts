@@ -1,4 +1,4 @@
-import axios from "axios";
+import axios, { type AxiosRequestConfig } from "axios";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -97,22 +97,31 @@ export const applicantAPI = {
 
 export const interviewAPI = {
   // Create new interview
-  createInterview: (data: { applicant_id: number; interview_type: string; position_code: string }) =>
-    publicAPI.post("/interviews/", data),
+  createInterview: (data: { applicant_id: number; interview_type: string; position_code: string }) => {
+    const payload = {
+      applicant_id: data.applicant_id,
+      position_code: data.position_code,
+      interview_type: data.interview_type,
+    };
+    return publicAPI.post("/interviews/", payload);
+  },
 
   // Alias for createInterview
   create: (data: { applicant: number; interview_type?: string; position_type: number }) =>
     api.post("/interviews/", { ...data, interview_type: data.interview_type || "initial_ai" }),
 
   // Get interview details
-  getInterview: (id: number) => publicAPI.get(`/interviews/${id}/`),
+  getInterview: (id: number, config?: AxiosRequestConfig) => publicAPI.get(`/interviews/${id}/`, config),
 
   // Upload video response (no immediate analysis)
-  uploadVideoResponse: (interviewId: number, formData: FormData) => {
-    return api.post(`/interviews/${interviewId}/video-response/`, formData, {
+  uploadVideoResponse: (interviewId: number, formData: FormData, config?: AxiosRequestConfig) => {
+    return publicAPI.post(`/interviews/${interviewId}/video-response/`, formData, {
       headers: {
         "Content-Type": "multipart/form-data",
+        ...(config?.headers || {}),
       },
+      timeout: 120000,
+      ...config,
     });
   },
 

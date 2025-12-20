@@ -4,6 +4,17 @@ from applicants.models import Applicant, OfficeLocation
 from .type_models import PositionType, QuestionType
 from django.utils.functional import cached_property
 
+# Controlled competency list for initial interview screening
+COMPETENCY_CHOICES = [
+    ("communication", "Communication"),
+    ("customer_handling", "Customer Handling"),
+    ("problem_explanation", "Problem Explanation"),
+    ("troubleshooting", "Troubleshooting"),
+    ("technical_reasoning", "Technical Reasoning"),
+    ("networking_concepts", "Networking Concepts"),
+    ("sales_upselling", "Sales / Upselling"),
+]
+
 
 class InterviewQuestion(models.Model):
     """Model for interview questions"""
@@ -29,7 +40,13 @@ class InterviewQuestion(models.Model):
         related_name='questions',
         help_text="Job position this question is designed for"
     )
-    tags = models.JSONField(default=list, blank=True, help_text="Subroles/tags for specialized question routing")
+    competency = models.CharField(
+        max_length=50,
+        choices=COMPETENCY_CHOICES,
+        default="communication",
+        help_text="Competency bucket used for initial interview routing",
+    )
+    tags = models.JSONField(default=list, blank=True, help_text="(Deprecated) legacy subrole tags; use competency instead.")
     max_duration = models.DurationField(null=True, blank=True, help_text="Maximum duration for answer")
     is_active = models.BooleanField(default=True)
     order = models.IntegerField(default=0, help_text="Display order of the question")
@@ -62,6 +79,11 @@ class Interview(models.Model):
         ('processing', 'Processing'),
         ('completed', 'Completed'),
         ('failed', 'Failed'),
+    ]
+    HR_DECISION_CHOICES = [
+        ('hire', 'Hire'),
+        ('reject', 'Reject'),
+        ('hold', 'Hold'),
     ]
     
     applicant = models.ForeignKey(Applicant, on_delete=models.CASCADE, related_name='interviews')
@@ -99,6 +121,33 @@ class Interview(models.Model):
     authenticity_notes = models.TextField(
         blank=True,
         help_text="HR notes on authenticity investigation"
+    )
+
+    # HR Decision Tracking
+    hr_decision = models.CharField(
+        max_length=20,
+        choices=HR_DECISION_CHOICES,
+        null=True,
+        blank=True,
+        help_text="Final HR decision for the interview"
+    )
+    hr_decision_reason = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Optional HR decision rationale"
+    )
+    hr_decision_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="interview_hr_decisions",
+        help_text="HR user who recorded the decision"
+    )
+    hr_decision_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when HR recorded the decision"
     )
     
     class Meta:
@@ -143,7 +192,19 @@ class Interview(models.Model):
     
     @cached_property
     def active_questions(self):
-        return list(InterviewQuestion.objects.filter(is_active=True).order_by("order"))
+        """
+        Active questions filtered by position.
+        position_type = concrete job position (e.g., Network Engineer)
+        category = broader job category (e.g., IT Support)
+        """
+        if not self.position_type_id:
+            return []
+        return list(
+            InterviewQuestion.objects.filter(
+                is_active=True,
+                position_type_id=self.position_type_id,
+            ).order_by("order")
+        )
 
 class VideoResponse(models.Model):
     """Model for video responses to interview questions"""
@@ -290,7 +351,7 @@ class JobPosition(models.Model):
         blank=True,
         related_name='job_positions'
     )
-    subroles = models.JSONField(default=list, blank=True, help_text="Subroles determine which specialized questions this job requires.")
+    subroles = models.JSONField(default=list, blank=True, help_text="(Deprecated) legacy subroles; questions are competency-based.")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

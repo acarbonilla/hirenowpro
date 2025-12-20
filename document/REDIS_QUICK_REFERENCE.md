@@ -50,7 +50,8 @@ python manage.py runserver
 ```powershell
 cd backend
 & .\venv\Scripts\Activate.ps1
-celery -A core worker --loglevel=info --pool=solo
+python -m celery -A core.celery worker -l info -P solo
+# Windows: use solo pool. Prefork is Linux-only and fails on Python 3.13.
 ```
 
 **Terminal 4: Frontend**

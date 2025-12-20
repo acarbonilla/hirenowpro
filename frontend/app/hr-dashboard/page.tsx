@@ -55,69 +55,38 @@ export default function HRDashboardPage() {
     try {
       const api = hrClient();
 
-      const [resultsRes, interviewsRes, applicantsRes] = await Promise.all([
-        api.get("/results/"),
-        api.get("/interviews/"),
-        api.get("/applicants/"),
-      ]);
-
-      const results = resultsRes.data.results || resultsRes.data;
-      const interviews = interviewsRes.data.results || interviewsRes.data;
-      const applicants = applicantsRes.data.results || applicantsRes.data;
-
-      const pendingReviews = Array.isArray(results)
-        ? results.filter((r: any) => r.recommendation === "review" || !r.hr_reviewed_at).length
-        : 0;
-
-      const today = new Date();
-      const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-      const completedToday = Array.isArray(results)
-        ? results.filter((r: any) => {
-            if (!r.created_at) return false;
-            const resultDate = new Date(r.created_at);
-            const resultDay = new Date(resultDate.getFullYear(), resultDate.getMonth(), resultDate.getDate());
-            return resultDay.getTime() === todayStart.getTime();
-          }).length
-        : 0;
-
-      const passedResults = Array.isArray(results) ? results.filter((r: any) => r.passed).length : 0;
-      const passRate = Array.isArray(results) && results.length > 0 ? (passedResults / results.length) * 100 : 0;
-
-      const avgScore =
-        Array.isArray(results) && results.length > 0
-          ? results.reduce((sum: number, r: any) => sum + (r.overall_score || 0), 0) / results.length
-          : 0;
+      // Temporarily removed heavy /results/ call; rely on lightweight overview
+      // const [resultsRes, interviewsRes, applicantsRes] = await Promise.all([
+      //   api.get("/results/"),
+      //   api.get("/interviews/"),
+      //   api.get("/applicants/"),
+      // ]);
+      const overviewRes = await api.get("/hr/dashboard/overview/");
+      const data = overviewRes.data || {};
 
       setStats({
-        total_applicants: Array.isArray(applicants) ? applicants.length : 0,
-        total_interviews: Array.isArray(interviews) ? interviews.length : 0,
-        pending_reviews: pendingReviews,
-        completed_today: completedToday,
-        pass_rate: passRate,
-        avg_score: avgScore,
+        total_applicants: data.total_applicants || 0,
+        total_interviews: data.total_interviews || 0,
+        pending_reviews: data.pending_reviews || 0,
+        completed_today: data.completed_today || 0,
+        pass_rate: data.pass_rate || 0,
+        avg_score: data.avg_score || 0,
       });
 
-      if (Array.isArray(interviews)) {
-        const recent = interviews
-          .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-          .slice(0, 5)
-          .map((interview: any) => {
-            const result = Array.isArray(results) ? results.find((r: any) => r.interview === interview.id) : null;
-
-            return {
-              id: interview.id,
-              result_id: result?.id,
-              applicant: interview.applicant,
-              interview_status: interview.status,
-              passed: result?.passed,
-              overall_score: result?.overall_score,
-              has_result: !!result,
-              hr_reviewed: !!result?.hr_reviewed_at,
-              created_at: interview.created_at,
-            };
-          });
-        setRecentInterviews(recent);
-      }
+      const recent = Array.isArray(data.recent_interviews) ? data.recent_interviews : [];
+      setRecentInterviews(
+        recent.map((interview: any) => ({
+          id: interview.id,
+          result_id: interview.result?.id,
+          applicant: interview.applicant,
+          interview_status: interview.status,
+          passed: interview.result?.passed,
+          overall_score: interview.result?.final_score,
+          has_result: !!interview.result,
+          hr_reviewed: !!interview.result?.hr_reviewed_at,
+          created_at: interview.created_at,
+        }))
+      );
     } catch (err: any) {
       const msg = err.response?.data?.detail || err.message || "Failed to load dashboard data";
       setError(msg);
@@ -172,7 +141,7 @@ export default function HRDashboardPage() {
           href="/hr-dashboard/results"
           className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
         >
-          View All Results
+          View Interview Review
         </Link>
       </div>
 
@@ -265,7 +234,7 @@ export default function HRDashboardPage() {
       <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-semibold text-gray-900">Recent Interviews</h3>
-          <Link href="/hr-dashboard/interviews" className="text-sm text-purple-600 hover:text-purple-700 font-medium">
+          <Link href="/hr-dashboard/review-queue" className="text-sm text-purple-600 hover:text-purple-700 font-medium">
             View All
           </Link>
         </div>

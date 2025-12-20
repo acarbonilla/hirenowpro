@@ -164,7 +164,7 @@ Development:
 │  ──────────────────────────────                                │
 │  • Terminal 1: docker run -d -p 6379:6379 redis:alpine        │
 │  • Terminal 2: python manage.py runserver                      │
-│  • Terminal 3: celery -A core worker --pool=solo              │
+│  • Terminal 3: python -m celery -A core.celery worker -l info -P solo │
 │  • Terminal 4: cd frontend && npm run dev                      │
 │  • Instant submit response (matches production)                │
 └────────────────────────────────────────────────────────────────┘
@@ -196,7 +196,7 @@ Result: Using thread fallback → 2-minute HTTP wait on submit
 
 To switch to instant mode:
 1. Install Redis (Docker: docker run -d -p 6379:6379 redis:alpine)
-2. Start Celery (celery -A core worker --pool=solo)
+2. Start Celery (python -m celery -A core.celery worker -l info -P solo)
 3. Done! Submit now returns in 2 seconds
 
 No code changes needed! 🎉

@@ -20,7 +20,14 @@ export default function InterviewMagicLoginPage() {
           localStorage.setItem("applicantToken", res.data.token);
           setStatus("success");
           setMessage("Login successful. Redirecting...");
-          const redirectUrl = res.data.redirect_url || `/interview/${res.data.applicant_id}`;
+          const interviewId = res.data.interview_id || res.data.id;
+          if (!interviewId && !res.data.redirect_url) {
+            setStatus("error");
+            setMessage("Interview link invalid. Request a new one.");
+            router.push("/interview-expired");
+            return;
+          }
+          const redirectUrl = res.data.redirect_url || `/interview/${interviewId}`;
           setTimeout(() => router.push(redirectUrl), 800);
         } else {
           setStatus("error");

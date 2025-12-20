@@ -28,6 +28,14 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
     try {
       const authRes = await authAPI.checkAuth();
       const perms = authRes.data.permissions;
+      const userType = authRes.data?.user_type || authRes.data?.user?.user_type || getHRUser()?.user_type;
+
+      // Block non-HR tokens from reaching HR pages
+      if (!userType?.startsWith("hr_") && !perms.is_hr_recruiter && !perms.is_hr_manager && !perms.is_superuser) {
+        clearHRAuth();
+        router.push("/hr-login");
+        return;
+      }
 
       if (perms.is_it_support && !perms.is_hr_manager && !perms.is_hr_recruiter) {
         router.push("/it-dashboard");
@@ -73,9 +81,9 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
 
   const baseNavigation = [
     { name: "Overview", href: "/hr-dashboard", icon: "🏠" },
-    { name: "HR Review Queue", href: "/hr-dashboard/interviews", icon: "📝" },
-    { name: "Interview Results", href: "/hr-dashboard/results", icon: "📊" },
-    { name: "Applicant History", href: "/hr-dashboard/history", icon: "🗂" },
+    { name: "HR Review Queue", href: "/hr-dashboard/review-queue", icon: "📝" },
+    { name: "Interview Review", href: "/hr-dashboard/results", icon: "📊" },
+    { name: "Interview Records", href: "/hr-dashboard/history", icon: "🗂" },
     { name: "Applicants", href: "/hr-dashboard/applicants", icon: "👥" },
     { name: "Analytics", href: "/hr-dashboard/analytics", icon: "📈" },
     { name: "AI vs HR Comparison", href: "/hr-dashboard/ai-comparison", icon: "🤖" },
