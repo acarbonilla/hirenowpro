@@ -46,6 +46,14 @@ class PublicInterviewSerializer(serializers.ModelSerializer):
         return obj.position_type.code if obj.position_type else None
 
     def get_questions(self, obj):
+        if getattr(obj, "selected_question_ids", None):
+            selected_ids = list(obj.selected_question_ids)
+            if not selected_ids:
+                return []
+            qs = InterviewQuestion.objects.filter(id__in=selected_ids)
+            question_map = {q.id: q for q in qs}
+            ordered = [question_map[qid] for qid in selected_ids if qid in question_map]
+            return PublicQuestionSerializer(ordered, many=True).data
         if not obj.position_type_id:
             return []
         qs = select_questions_for_interview(obj)

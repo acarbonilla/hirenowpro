@@ -1,4 +1,5 @@
 from rest_framework import serializers
+import logging
 from .models import (
     Interview,
     InterviewQuestion,
@@ -46,6 +47,23 @@ class JobPositionSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ['created_at', 'updated_at', 'created_by']
+
+
+class PublicJobPositionSerializer(serializers.ModelSerializer):
+    offices_detail = OfficeMiniSerializer(source="offices", many=True, read_only=True)
+    category_detail = JobCategorySerializer(source="category", read_only=True)
+
+    class Meta:
+        model = JobPosition
+        fields = [
+            "id",
+            "name",
+            "code",
+            "description",
+            "is_active",
+            "category_detail",
+            "offices_detail",
+        ]
 
 
 class InterviewQuestionSerializer(serializers.ModelSerializer):
@@ -343,6 +361,15 @@ class InterviewSerializer(serializers.ModelSerializer):
     
     def get_questions(self, obj):
         """Get active questions for the interview filtered by position type (position-first)."""
+        if getattr(obj, "selected_question_ids", None):
+            selected_ids = list(obj.selected_question_ids)
+            if not selected_ids:
+                return []
+            from .models import InterviewQuestion
+            qs = InterviewQuestion.objects.filter(id__in=selected_ids)
+            question_map = {q.id: q for q in qs}
+            ordered = [question_map[qid] for qid in selected_ids if qid in question_map]
+            return InterviewQuestionSerializer(ordered, many=True).data
         if not obj.position_type_id:
             return []
         from .question_selection import select_questions_for_interview
@@ -372,7 +399,13 @@ class InterviewCreateSerializer(serializers.ModelSerializer):
         applicant = validated_data.get('applicant')
         if applicant:
             applicant.status = 'in_review'
-            applicant.save(update_fields=["status"])
+            try:
+                applicant.save(update_fields=["status"])
+            except Exception:
+                logging.getLogger(__name__).warning(
+                    "Applicant status update failed during interview creation",
+                    extra={"applicant_id": getattr(applicant, "id", None), "interview_id": interview.id},
+                )
         # Queue processing record
         from processing.models import ProcessingQueue
         ProcessingQueue.objects.create(

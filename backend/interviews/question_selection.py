@@ -1,79 +1,123 @@
-from typing import Iterable, List, Sequence
+from typing import Dict, List, Sequence, Tuple
+import logging
+import random
 
 from .models import InterviewQuestion
 
 
-GENERAL_COMPETENCIES = ["communication", "customer_handling", "problem_explanation"]
-CATEGORY_COMPETENCY_MAP = {
-    "it_support": ["troubleshooting", "technical_reasoning"],
-    "technical": ["troubleshooting", "technical_reasoning"],
-    "network": ["networking_concepts", "technical_reasoning"],
-    "customer_service": ["customer_handling", "communication"],
-    "sales": ["sales_upselling", "communication", "customer_handling"],
-    "sales_marketing": ["sales_upselling", "communication", "customer_handling"],
+INTERVIEW_BLUEPRINT = [
+    "technical_reasoning",
+    "troubleshooting",
+    "communication",
+    "problem_explanation",
+    "customer_handling",
+]
+
+FALLBACK_COMPETENCY_MAP = {
+    "communication": ["problem_explanation", "technical_reasoning"],
+    "problem_explanation": ["technical_reasoning"],
+    "customer_handling": ["communication", "problem_explanation"],
+    "troubleshooting": ["technical_reasoning"],
+    "technical_reasoning": ["troubleshooting"],
 }
-SALES_ALLOWED_CATEGORIES = {"customer_service", "sales", "sales_marketing"}
+
+logger = logging.getLogger(__name__)
 
 
-def _pick_ordered(qs: Iterable[InterviewQuestion], limit: int, selected: List[InterviewQuestion], seen_ids: set):
-    for q in qs:
-        if q.id in seen_ids:
-            continue
-        selected.append(q)
-        seen_ids.add(q.id)
-        if len(selected) >= limit:
-            break
-
-
-def select_questions_for_interview(interview, minimum_required: int = 5) -> Sequence[InterviewQuestion]:
+def select_questions_for_interview_with_metadata(
+    interview, minimum_required: int = 5
+) -> Tuple[Sequence[InterviewQuestion], List[dict]]:
     """
-    Deterministic competency-based selection for Initial Interview.
-    - 70-80% from general competency pool (communication/customer_handling/problem_explanation)
-    - 20-30% from category-aligned competencies (e.g., troubleshooting for IT)
-    - Sales/upselling questions are only allowed for sales/customer-service categories.
+    Deterministic, seeded competency-based selection for Initial Interview.
+    - Group by job category (PositionType) and competency.
+    - Use fixed blueprint order; randomize content within each competency.
+    - Seeded by interview.id for reproducibility.
     """
     if not interview or not getattr(interview, "position_type_id", None):
         return InterviewQuestion.objects.none()
 
-    category_code = getattr(interview.position_type, "code", None)
+    total_target = max(minimum_required, len(INTERVIEW_BLUEPRINT))
+    if total_target != len(INTERVIEW_BLUEPRINT):
+        raise ValueError("Interview blueprint length must equal required question count.")
+
+    all_competencies = set(INTERVIEW_BLUEPRINT)
+    for fallback_list in FALLBACK_COMPETENCY_MAP.values():
+        all_competencies.update(fallback_list)
 
     base_qs = (
         InterviewQuestion.objects.filter(
             is_active=True,
-            position_type_id=interview.position_type_id,
+            category_id=interview.position_type_id,
+            competency__in=all_competencies,
+            question_type__code="general",
         )
-        .order_by("order", "id")
-        .select_related("question_type", "position_type")
+        .order_by("id")
+        .select_related("question_type", "category")
     )
 
-    allowed_category_competencies = CATEGORY_COMPETENCY_MAP.get(category_code, [])
-    general_qs = base_qs.filter(competency__in=GENERAL_COMPETENCIES)
-    category_qs = base_qs.filter(competency__in=allowed_category_competencies)
+    pools: Dict[str, List[InterviewQuestion]] = {comp: [] for comp in all_competencies}
+    for question in base_qs:
+        pools.setdefault(question.competency, []).append(question)
 
-    # Safety guard: no sales/upselling unless the category explicitly allows it
-    if category_code not in SALES_ALLOWED_CATEGORIES:
-        general_qs = general_qs.exclude(competency="sales_upselling")
-        category_qs = category_qs.exclude(competency="sales_upselling")
-        base_qs = base_qs.exclude(competency="sales_upselling")
+    missing = [comp for comp in INTERVIEW_BLUEPRINT if not pools.get(comp)]
+    if missing:
+        raise ValueError(f"Missing question pool for competencies: {', '.join(missing)}")
 
-    total_available = base_qs.count()
-    if total_available == 0:
-        return InterviewQuestion.objects.none()
-
-    total_target = min(total_available, max(minimum_required, 5))
-    general_target = max(1, int(round(total_target * 0.7)))
-    category_target = max(0, total_target - general_target)
+    seed_value = getattr(interview, "id", None) or getattr(interview, "applicant_id", None)
+    rng = random.Random(seed_value)
 
     selected: List[InterviewQuestion] = []
-    seen_ids: set = set()
+    metadata: List[dict] = []
+    seen_ids = set()
 
-    _pick_ordered(general_qs, general_target, selected, seen_ids)
-    _pick_ordered(category_qs, general_target + category_target, selected, seen_ids)
+    for competency in INTERVIEW_BLUEPRINT:
+        pool = [q for q in pools.get(competency, []) if q.id not in seen_ids]
+        fallback_used = False
+        selected_competency = competency
 
-    # Fallbacks: fill any remaining slots with general pool, then any remaining base questions
-    if len(selected) < total_target:
-        _pick_ordered(general_qs, total_target, selected, seen_ids)
-    if len(selected) < total_target:
-        _pick_ordered(base_qs, total_target, selected, seen_ids)
+        if not pool:
+            fallback_used = True
+            fallback_competencies = FALLBACK_COMPETENCY_MAP.get(competency, [])
+            pool = []
+            for fallback_competency in fallback_competencies:
+                fallback_pool = [
+                    q for q in pools.get(fallback_competency, []) if q.id not in seen_ids
+                ]
+                if fallback_pool:
+                    pool = fallback_pool
+                    selected_competency = fallback_competency
+                    break
 
+        if not pool:
+            raise ValueError(f"Not enough questions for competency: {competency}")
+
+        pick = rng.choice(pool)
+        selected.append(pick)
+        seen_ids.add(pick.id)
+        if fallback_used and selected_competency != competency:
+            logger.info(
+                "Interview question fallback used",
+                extra={
+                    "interview_id": getattr(interview, "id", None),
+                    "slot_competency": competency,
+                    "selected_competency": selected_competency,
+                    "question_id": pick.id,
+                },
+            )
+        metadata.append(
+            {
+                "slot_competency": competency,
+                "selected_competency": selected_competency,
+                "question_id": pick.id,
+                "fallback_used": fallback_used and selected_competency != competency,
+            }
+        )
+
+    return selected, metadata
+
+
+def select_questions_for_interview(interview, minimum_required: int = 5) -> Sequence[InterviewQuestion]:
+    selected, _metadata = select_questions_for_interview_with_metadata(
+        interview, minimum_required=minimum_required
+    )
     return selected

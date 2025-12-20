@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 
 from pathlib import Path
 import os
+import secrets
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -25,10 +26,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure--jlykf66y9jun!p93sh^_ep-f&@(rlwmst@65e7ay%4#1hmkzp')
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.getenv('DEBUG', 'True') == 'True'
+# Development:
+#   set DJANGO_DEBUG=true
+#   set DJANGO_SECRET_KEY=dev-only-secret
+#   set APPLICANT_SECRET=dev-only-applicant-secret (optional in dev)
+# Production:
+#   set DJANGO_DEBUG=false
+#   set DJANGO_SECRET_KEY=<secure-random>
+#   set APPLICANT_SECRET=<secure-random>
+DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() == "true"
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY") or os.getenv("SECRET_KEY")
+if not SECRET_KEY and DEBUG:
+    SECRET_KEY = secrets.token_urlsafe(50)
+if not SECRET_KEY and not DEBUG:
+    raise RuntimeError("DJANGO_SECRET_KEY must be set in production")
 
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
@@ -164,6 +175,12 @@ REST_FRAMEWORK = {
     'DEFAULT_EXCEPTION_HANDLER': 'core.exception_handler.json_exception_handler',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
+    'DEFAULT_THROTTLE_RATES': {
+        'registration_hourly': '5/hour',
+        'registration_daily': '10/day',
+        'training_upload_minute': '5/minute',
+        'training_upload_hour': '20/hour',
+    },
 }
 
 
@@ -242,11 +259,18 @@ DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY', '')
 AUTH_USER_MODEL = 'accounts.User'
 
 # Applicant token settings
-APPLICANT_SECRET = os.getenv("APPLICANT_SECRET", SECRET_KEY)
+APPLICANT_SECRET = os.getenv("APPLICANT_SECRET")
+if not APPLICANT_SECRET and DEBUG:
+    APPLICANT_SECRET = secrets.token_urlsafe(32)
+if not APPLICANT_SECRET and not DEBUG:
+    raise RuntimeError("APPLICANT_SECRET must be set in production")
 APPLICANT_TOKEN_EXPIRY_HOURS = int(os.getenv("APPLICANT_TOKEN_EXPIRY_HOURS", "12"))
 
 # Debug flags
-LOG_HR_AUTH = True
+LOG_HR_AUTH = False
+
+# Training uploads
+TRAINING_MAX_UPLOAD_SIZE = int(os.getenv("TRAINING_MAX_UPLOAD_SIZE", str(25 * 1024 * 1024)))
 
 
 # ============================

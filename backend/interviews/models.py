@@ -149,6 +149,16 @@ class Interview(models.Model):
         blank=True,
         help_text="Timestamp when HR recorded the decision"
     )
+    selected_question_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Ordered list of question IDs selected for this interview"
+    )
+    selected_question_metadata = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Selection metadata per slot (slot competency, selected competency, fallback)"
+    )
     
     class Meta:
         db_table = 'interviews'
@@ -197,6 +207,13 @@ class Interview(models.Model):
         position_type = concrete job position (e.g., Network Engineer)
         category = broader job category (e.g., IT Support)
         """
+        if getattr(self, "selected_question_ids", None):
+            selected_ids = list(self.selected_question_ids)
+            if not selected_ids:
+                return []
+            qs = InterviewQuestion.objects.filter(id__in=selected_ids)
+            question_map = {q.id: q for q in qs}
+            return [question_map[qid] for qid in selected_ids if qid in question_map]
         if not self.position_type_id:
             return []
         return list(

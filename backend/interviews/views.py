@@ -24,11 +24,12 @@ from .serializers import (
     InterviewQuestionSerializer,
     InterviewQuestionWriteSerializer,
     JobPositionSerializer,
+    PublicJobPositionSerializer,
     HRDecisionSerializer,
 )
 from .type_serializers import JobCategorySerializer, QuestionTypeSerializer
 from .type_serializers import JobCategorySerializer as PositionTypeSerializer
-from .question_selection import select_questions_for_interview
+from .question_selection import select_questions_for_interview, select_questions_for_interview_with_metadata
 
 
 class JobCategoryViewSet(viewsets.ModelViewSet):
@@ -87,8 +88,7 @@ class JobPositionViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         """
-        Allow authenticated HR users to read; restrict writes to staff/superusers or users
-        with job position permissions.
+        Public read, HR-only write.
         """
 
         class ManageJobPositionsPermission(IsAuthenticated):
@@ -106,10 +106,21 @@ class JobPositionViewSet(viewsets.ModelViewSet):
                     or user.has_perm("interviews.delete_jobposition")
                 )
 
+        if self.action in ["list", "retrieve"]:
+            return [AllowAny()]
         return [IsAuthenticated(), IsHRUser(), ManageJobPositionsPermission()]
+
+    def get_serializer_class(self):
+        if self.action in ["list", "retrieve"]:
+            return PublicJobPositionSerializer
+        return JobPositionSerializer
 
     def get_queryset(self):
         qs = super().get_queryset()
+        if self.action in ["list", "retrieve"]:
+            user = getattr(self.request, "user", None)
+            if not user or not user.is_authenticated:
+                qs = qs.filter(is_active=True)
         if self.request:
             code = self.request.query_params.get("code")
             active_only = self.request.query_params.get("active_only", "false").lower() == "true"
@@ -252,8 +263,12 @@ class InterviewQuestionViewSet(viewsets.ModelViewSet):
                 queryset = queryset.filter(question_type_id=int(question_type))
             else:
                 queryset = queryset.filter(question_type__code=question_type)
+
+        competency = self.request.query_params.get("competency")
+        if competency:
+            queryset = queryset.filter(competency=competency)
         
-        return queryset
+        return queryset.distinct()
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -369,7 +384,14 @@ class InterviewViewSet(viewsets.ModelViewSet):
         print("DEBUG_INTERVIEW_CREATED:", interview.id, interview.position_type_id)
 
         if interview.position_type_id:
-            selected_questions = select_questions_for_interview(interview)
+            try:
+                selected_questions, selection_metadata = select_questions_for_interview_with_metadata(interview)
+            except ValueError as exc:
+                interview.delete()
+                return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+            interview.selected_question_ids = [q.id for q in selected_questions]
+            interview.selected_question_metadata = selection_metadata
+            interview.save(update_fields=["selected_question_ids", "selected_question_metadata"])
             if hasattr(interview, "questions"):
                 interview.questions.set(selected_questions)
 

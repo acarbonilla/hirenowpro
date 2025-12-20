@@ -6,23 +6,37 @@ from .models import TrainingModule, TrainingSession, TrainingResponse
 from .serializers import TrainingModuleSerializer, TrainingSessionSerializer, TrainingResponseSerializer
 from interviews.ai_service import get_ai_service
 import os
+from django.conf import settings
 
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import IsAuthenticated
+from accounts.authentication import ApplicantTokenAuthentication
+from accounts.permissions import IsApplicant
+from common.throttles import TrainingUploadMinuteThrottle, TrainingUploadHourThrottle
 
 class TrainingModuleViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = TrainingModule.objects.filter(is_active=True)
     serializer_class = TrainingModuleSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsApplicant]
+    authentication_classes = [ApplicantTokenAuthentication]
 
 class TrainingSessionViewSet(viewsets.ModelViewSet):
     serializer_class = TrainingSessionSerializer
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated, IsApplicant]
+    authentication_classes = [ApplicantTokenAuthentication]
     
     def get_queryset(self):
-        applicant_id = self.request.query_params.get('applicant_id')
-        if applicant_id:
-            return TrainingSession.objects.filter(applicant_id=applicant_id)
-        return TrainingSession.objects.all() # Allow all for now if no filter, or restrict later
+        user = getattr(self.request, "user", None)
+        applicant_id = self.request.query_params.get("applicant_id")
+        if user and getattr(user, "is_authenticated", False):
+            if applicant_id and str(applicant_id) != str(user.id):
+                return TrainingSession.objects.none()
+            return TrainingSession.objects.filter(applicant_id=user.id)
+        return TrainingSession.objects.none()
+
+    def get_throttles(self):
+        if self.action == "submit_response":
+            return [TrainingUploadMinuteThrottle(), TrainingUploadHourThrottle()]
+        return super().get_throttles()
 
     def create(self, request, *args, **kwargs):
         # Custom create to handle applicant_id
@@ -31,6 +45,10 @@ class TrainingSessionViewSet(viewsets.ModelViewSet):
         
         if not applicant_id:
             return Response({"error": "applicant_id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = getattr(request, "user", None)
+        if not user or str(applicant_id) != str(user.id):
+            return Response({"error": "Forbidden"}, status=status.HTTP_403_FORBIDDEN)
             
         session = TrainingSession.objects.create(
             applicant_id=applicant_id,
@@ -59,6 +77,13 @@ class TrainingSessionViewSet(viewsets.ModelViewSet):
                 return Response(
                     {"error": "video and question_text are required"}, 
                     status=status.HTTP_400_BAD_REQUEST
+                )
+
+            max_size = getattr(settings, "TRAINING_MAX_UPLOAD_SIZE", 25 * 1024 * 1024)
+            if video_file.size > max_size:
+                return Response(
+                    {"error": "video file too large", "max_bytes": max_size},
+                    status=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 )
                 
             # Create response object (this saves the video file)

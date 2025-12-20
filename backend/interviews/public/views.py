@@ -18,6 +18,7 @@ from .serializers import (
     PublicJobPositionSerializer,
 )
 from interviews.tasks import process_complete_interview
+from interviews.question_selection import select_questions_for_interview, select_questions_for_interview_with_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -44,17 +45,37 @@ class PublicInterviewCreateView(generics.CreateAPIView):
         if not position_type:
             raise ValidationError({"position_code": "Position type not found"})
 
-        interview = Interview.objects.create(
-            applicant=applicant,
-            position_type=position_type,
-            interview_type=interview_type,
-            status="pending",
-        )
+        try:
+            interview = Interview.objects.create(
+                applicant=applicant,
+                position_type=position_type,
+                interview_type=interview_type,
+                status="pending",
+            )
+        except Exception:
+            logger.exception(
+                "Interview create failed",
+                extra={"applicant_id": applicant_id, "position_code": position_code},
+            )
+            return Response({"detail": "Interview creation failed."}, status=status.HTTP_400_BAD_REQUEST)
+
         if not interview:
-            return Response({"error": "Interview creation failed"}, status=status.HTTP_400_BAD_REQUEST)
-        if not Interview.objects.filter(id=interview.id).exists():
-            return Response({"error": "Interview creation failed"}, status=status.HTTP_400_BAD_REQUEST)
-        print("INTERVIEW CREATED:", interview.id)
+            return Response({"detail": "Interview creation failed."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            selected_questions, selection_metadata = select_questions_for_interview_with_metadata(interview)
+        except ValueError as exc:
+            logger.warning(
+                "Interview question selection failed",
+                extra={"interview_id": interview.id, "applicant_id": applicant_id, "error": str(exc)},
+            )
+            interview.delete()
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        interview.selected_question_ids = [q.id for q in selected_questions]
+        interview.selected_question_metadata = selection_metadata
+        interview.save(update_fields=["selected_question_ids", "selected_question_metadata"])
+
         serializer = self.get_serializer(interview)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 

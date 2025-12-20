@@ -3,6 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from accounts.permissions import IsApplicant
+from common.throttles import RegistrationHourlyThrottle, RegistrationDailyThrottle
 from common.permissions import IsHRUser
 from accounts.authentication import generate_applicant_token, ApplicantTokenAuthentication
 from django.db.models import Q, OuterRef, Subquery, Exists, Value, Case, When, BooleanField, CharField
@@ -55,6 +56,11 @@ class ApplicantViewSet(viewsets.ModelViewSet):
         if self.action in ['create']:
             return [AllowAny()]
         return [IsAuthenticated(), IsHRUser()]
+
+    def get_throttles(self):
+        if self.action == "create":
+            return [RegistrationHourlyThrottle(), RegistrationDailyThrottle()]
+        return super().get_throttles()
     
     def get_queryset(self):
         """Filter applicants with relationship optimization based on query parameters"""
@@ -177,9 +183,7 @@ class ApplicantViewSet(viewsets.ModelViewSet):
         """Create new applicant"""
         import logging
         logger = logging.getLogger(__name__)
-        
-        logger.info(f"Registration request data: {request.data}")
-        
+
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
             logger.error(f"Validation errors: {serializer.errors}")
@@ -210,7 +214,7 @@ class ApplicantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_201_CREATED
             )
         except Exception as e:
-            logger.error(f"Error saving applicant: {str(e)}")
+            logger.error("Error saving applicant", exc_info=True)
             return Response(
                 {
                     'error': 'Failed to save applicant',

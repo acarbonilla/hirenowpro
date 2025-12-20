@@ -1,4 +1,5 @@
 import jwt
+import logging
 from django.conf import settings
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
@@ -8,13 +9,9 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.contrib.auth import get_user_model
 
 
-APPLICANT_SECRET = getattr(settings, "APPLICANT_SECRET", settings.SECRET_KEY)
+APPLICANT_SECRET = settings.APPLICANT_SECRET
 APPLICANT_TOKEN_EXPIRY_HOURS = getattr(settings, "APPLICANT_TOKEN_EXPIRY_HOURS", 6)
 PHASE2_TOKEN_EXPIRY_HOURS = getattr(settings, "PHASE2_TOKEN_EXPIRY_HOURS", 24)
-
-
-def debug(msg):
-    print("HR_AUTH_DEBUG:", msg)
 
 
 def validate_hr_access(user):
@@ -23,7 +20,7 @@ def validate_hr_access(user):
 
     allowed_roles = ["hr_manager", "hr_recruiter"]
     if getattr(settings, "LOG_HR_AUTH", False):
-        debug(f"user={user.username}, role={user.role}, groups={[g.name for g in user.groups.all()]}")
+        logging.getLogger(__name__).debug("HR auth check")
     return user.role in allowed_roles
 
 
@@ -70,7 +67,6 @@ class ApplicantTokenAuthentication(BaseAuthentication):
 
     def authenticate(self, request):
         auth_header = request.headers.get("Authorization") or ""
-        print("DEBUG_TOKEN_AUTH:", auth_header)
         if not auth_header.startswith(f"{self.keyword} "):
             return None
 
@@ -106,7 +102,7 @@ class ApplicantTokenAuthentication(BaseAuthentication):
                     # Log expired attempt
                     import logging
                     logger = logging.getLogger(__name__)
-                    logger.warning(f"Expired applicant token for applicant {applicant_id} from {request.META.get('REMOTE_ADDR')}")
+                    logger.warning("Expired applicant token", extra={"remote_addr": request.META.get("REMOTE_ADDR")})
                     raise AuthenticationFailed("Token expired")
             except Exception:
                 raise AuthenticationFailed("Token expired")
@@ -130,7 +126,7 @@ class ApplicantTokenAuthentication(BaseAuthentication):
         # Mark as authenticated
         setattr(applicant, "is_authenticated", True)
         setattr(applicant, "user_type", "applicant")
-        print("DEBUG_TOKEN_RESULT:", applicant.id)
+        logging.getLogger(__name__).info("Applicant token auth succeeded")
         return (applicant, None)
 
 

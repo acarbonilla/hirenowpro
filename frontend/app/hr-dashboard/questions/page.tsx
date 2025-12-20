@@ -51,6 +51,7 @@ export default function QuestionsPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [positionFilter, setPositionFilter] = useState<PositionType>("");
   const [typeFilter, setTypeFilter] = useState<QuestionType>("");
+  const [competencyFilter, setCompetencyFilter] = useState("");
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [positionTypes, setPositionTypes] = useState<TypeDetail[]>([]);
@@ -75,8 +76,12 @@ export default function QuestionsPage() {
   }, []);
 
   useEffect(() => {
+    fetchQuestions();
+  }, [competencyFilter]);
+
+  useEffect(() => {
     applyFilters();
-  }, [questions, searchQuery, positionFilter, typeFilter, positionTypes, questionTypes]);
+  }, [questions, searchQuery, positionFilter, typeFilter, competencyFilter, positionTypes, questionTypes]);
 
   const fetchQuestions = async () => {
     setLoading(true);
@@ -86,10 +91,18 @@ export default function QuestionsPage() {
 
       // Fetch all questions - try multiple approaches to handle pagination
       let allQuestions: Question[] = [];
+      const params = new URLSearchParams();
+      if (competencyFilter) {
+        params.set("competency", competencyFilter);
+      }
       let nextUrl = `${API_BASE_URL}/questions/`;
 
       // First try with large page size
-      const firstResponse = await axios.get(`${nextUrl}?page_size=1000`, { headers });
+      const query = params.toString();
+      const firstResponse = await axios.get(
+        `${nextUrl}?page_size=1000${query ? `&${query}` : ""}`,
+        { headers },
+      );
 
       if (firstResponse.data.results) {
         // Paginated response
@@ -107,7 +120,11 @@ export default function QuestionsPage() {
         allQuestions = firstResponse.data || [];
       }
 
-      setQuestions(allQuestions);
+      const uniqueById = new Map<number, Question>();
+      allQuestions.forEach((q) => {
+        uniqueById.set(q.id, q);
+      });
+      setQuestions(Array.from(uniqueById.values()));
       console.log(`Total questions fetched: ${allQuestions.length}`);
     } catch (err: any) {
       console.error("Error fetching questions:", err);
@@ -186,7 +203,12 @@ export default function QuestionsPage() {
       });
     }
 
+    if (competencyFilter) {
+      filtered = filtered.filter((q) => q.competency === competencyFilter);
+    }
+
     setFilteredQuestions(filtered);
+    setCurrentPage(1);
   };
 
   const handleAddQuestion = () => {
@@ -521,7 +543,7 @@ export default function QuestionsPage() {
 
       {/* Filters */}
       <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           {/* Search */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Search Questions</label>
@@ -578,6 +600,23 @@ export default function QuestionsPage() {
               {questionTypes.map((type) => (
                 <option key={type.id} value={type.code}>
                   {type.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Competency Filter */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Competency</label>
+            <select
+              value={competencyFilter}
+              onChange={(e) => setCompetencyFilter(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            >
+              <option value="">All Competencies</option>
+              {COMPETENCY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
                 </option>
               ))}
             </select>

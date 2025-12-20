@@ -11,6 +11,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.contrib.auth import logout
 from .models import User
+from common.throttles import RegistrationHourlyThrottle, RegistrationDailyThrottle
 from .serializers import (
     LoginSerializer, 
     UserSerializer, 
@@ -110,6 +111,7 @@ class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [AllowAny]
+    throttle_classes = [RegistrationHourlyThrottle, RegistrationDailyThrottle]
     
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
