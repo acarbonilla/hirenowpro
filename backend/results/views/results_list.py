@@ -52,6 +52,7 @@ class InterviewResultList(APIView):
         include_stats = (request.query_params.get("include_stats") or "").lower() == "true"
         now = timezone.now()
         review_cutoff = now - timedelta(days=30)
+        review_score_cutoff = 50
 
         # Apply coarse date filters only on interview.created_at (indexed).
         # Arbitrary ranges are intentionally disallowed to prevent unbounded scans.
@@ -62,6 +63,7 @@ class InterviewResultList(APIView):
         }
 
         qs = InterviewResult.objects.order_by("-result_date")
+        qs = qs.filter(final_score__gte=review_score_cutoff)
 
         # Intentional UX/perf boundary: Interview Review is a 30-day action queue.
         # Older interviews remain accessible via Interview Records.
@@ -141,6 +143,7 @@ class InterviewResultList(APIView):
         }
         if include_stats:
             pending_qs = InterviewResult.objects.order_by("-result_date")
+            pending_qs = pending_qs.filter(final_score__gte=review_score_cutoff)
             if not include_older:
                 pending_qs = pending_qs.filter(result_date__gte=review_cutoff)
             pending_qs = pending_qs.filter(hr_decision__isnull=True)
@@ -150,6 +153,7 @@ class InterviewResultList(APIView):
                 hr_decision__isnull=False,
                 hr_decision_at__gte=reviewed_today_start,
             )
+            reviewed_today_qs = reviewed_today_qs.filter(final_score__gte=review_score_cutoff)
             if not include_older:
                 reviewed_today_qs = reviewed_today_qs.filter(result_date__gte=review_cutoff)
             response.data["stats"] = {

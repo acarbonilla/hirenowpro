@@ -30,6 +30,7 @@ class InterviewReviewDetails(APIView):
         )
 
         videos_payload = []
+        scores_by_competency = {}
         for vr in video_responses:
             ai_assessment = ""
             ai_scoring = {
@@ -62,6 +63,7 @@ class InterviewReviewDetails(APIView):
                         "order": vr.question.order,
                     },
                     "video_file": vr.video_file_path.url if vr.video_file_path else None,
+                    "video_url": request.build_absolute_uri(vr.video_file_path.url) if vr.video_file_path else None,
                     "transcript": vr.transcript or "",
                     "ai_score": vr.ai_score or 0,
                     "ai_assessment": ai_assessment,
@@ -72,5 +74,27 @@ class InterviewReviewDetails(APIView):
                     "status": vr.status if hasattr(vr, "status") else "completed",
                 }
             )
+            score = vr.final_score
+            if score is not None:
+                competency = getattr(vr.question, "competency", None) or "communication"
+                bucket_total, bucket_count = scores_by_competency.get(competency, (0.0, 0))
+                scores_by_competency[competency] = (bucket_total + score, bucket_count + 1)
 
-        return Response({"video_responses": videos_payload})
+        from interviews.scoring import compute_competency_scores
+
+        competency_score_data = compute_competency_scores(
+            scores_by_competency=scores_by_competency,
+            role_code=getattr(interview.position_type, "code", None),
+        )
+
+        return Response(
+            {
+                "video_responses": videos_payload,
+                "raw_scores_per_competency": competency_score_data["raw_scores_per_competency"],
+                "weighted_scores_per_competency": competency_score_data["weighted_scores_per_competency"],
+                "final_weighted_score": competency_score_data["final_weighted_score"],
+                "weights_used": competency_score_data["weights_used"],
+                "role_profile": competency_score_data["role_profile"],
+                "ai_recommendation_explanation": competency_score_data["ai_recommendation_explanation"],
+            }
+        )
