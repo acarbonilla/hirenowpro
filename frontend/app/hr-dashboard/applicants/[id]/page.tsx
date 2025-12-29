@@ -19,6 +19,11 @@ export default function ApplicantDetailPage() {
   const [loading, setLoading] = useState(false);
   const [interviewId, setInterviewId] = useState<number | null>(null);
   const [interviewStatus, setInterviewStatus] = useState<string | null>(null);
+  const [interviewDecision, setInterviewDecision] = useState<string | null>(null);
+  const [interview, setInterview] = useState<{ status?: string | null; is_archived?: boolean | null; archived?: boolean | null } | null>(null);
+  const [activeRetakeExists, setActiveRetakeExists] = useState(false);
+
+  const normalizeStatus = (value?: string | null) => (value || "").trim().toUpperCase();
 
   const loadLatestInterview = async () => {
     try {
@@ -26,21 +31,56 @@ export default function ApplicantDetailPage() {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
       const res = await axios.get(`${API_BASE_URL}/interviews/`, {
         headers,
-        params: { applicant_id: applicantId, page_size: 1 },
+        params: { applicant_id: applicantId, page_size: 5 },
       });
       const results = res.data?.results || [];
       const latest = Array.isArray(results) && results.length > 0 ? results[0] : null;
+      const hasActiveRetake = Array.isArray(results)
+        ? results.some((item: any) => {
+            const status = normalizeStatus(item?.status);
+            return item?.is_retake === true && item?.is_archived !== true && item?.archived !== true
+              && (status === "PENDING" || status === "IN_PROGRESS");
+          })
+        : false;
+      setInterview(latest ?? null);
       setInterviewId(latest?.id ?? null);
       setInterviewStatus(latest?.status ?? null);
+      setInterviewDecision(latest?.hr_decision ?? null);
+      setActiveRetakeExists(hasActiveRetake);
     } catch (err: any) {
+      setInterview(null);
       setInterviewId(null);
       setInterviewStatus(null);
+      setInterviewDecision(null);
+      setActiveRetakeExists(false);
     }
   };
 
   useEffect(() => {
     loadLatestInterview();
   }, [applicantId]);
+
+  const interviewArchived =
+    interview?.status === "ARCHIVED" || interview?.is_archived === true || interview?.archived === true;
+
+  const getRetakeStatus = () => {
+    if (interviewArchived) return "ARCHIVED";
+
+    const decision = normalizeStatus(interviewDecision);
+    if (decision === "HOLD" || decision === "ON_HOLD") return "ON_HOLD";
+    if (decision === "REJECT" || decision === "REJECTED" || decision === "FAILED") return "FAILED";
+
+    return "DISABLED";
+  };
+
+  const retakeStatus = getRetakeStatus();
+  const retakeEnabled = !activeRetakeExists && ["FAILED", "ON_HOLD"].includes(retakeStatus);
+  const retakeDisabledMessage =
+    activeRetakeExists
+      ? "An active retake already exists for this applicant."
+      : retakeStatus === "ARCHIVED"
+      ? "This interview is archived. Retakes require creating a new interview."
+      : "Retake is available only for failed or on-hold interviews.";
 
   const resendLink = async () => {
     setLoading(true);
@@ -97,6 +137,9 @@ export default function ApplicantDetailPage() {
       setError("No interview found for retake.");
       return;
     }
+    if (!retakeEnabled) {
+      return;
+    }
     const reason = window.prompt("Retake approval reason (optional):") || "";
     setLoading(true);
     setError(null);
@@ -132,11 +175,15 @@ export default function ApplicantDetailPage() {
       )}
       <button
         onClick={allowRetake}
-        disabled={loading}
+        disabled={loading || !retakeEnabled}
+        title={!retakeEnabled ? "Retake is unavailable for this interview." : undefined}
         className="ml-3 px-4 py-2 bg-rose-600 text-white rounded hover:bg-rose-700 transition"
       >
         {loading ? "Processing..." : "Allow Retake"}
       </button>
+      {!retakeEnabled && (
+        <p className="mt-2 text-sm text-gray-600">{retakeDisabledMessage}</p>
+      )}
       <button
         onClick={generateQR}
         disabled={loading}

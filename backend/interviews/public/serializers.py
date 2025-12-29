@@ -40,6 +40,8 @@ class PublicInterviewSerializer(serializers.ModelSerializer):
             "attempt_number",
             "current_question_index",
             "archived",
+            "is_retake",
+            "expires_at",
             "created_at",
             "questions",
             "answered_question_ids",

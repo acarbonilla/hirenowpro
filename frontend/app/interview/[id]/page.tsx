@@ -28,6 +28,7 @@ export default function InterviewPage() {
   const params = useParams();
   const router = useRouter();
   const interviewId = parseInt(params.id as string);
+  const resumeStorageKey = "resumeInterview";
 
   const webcamRef = useRef<Webcam>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -53,6 +54,21 @@ export default function InterviewPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState("");
+  const [deviceWarning, setDeviceWarning] = useState("");
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedVideoId, setSelectedVideoId] = useState("");
+  const [selectedAudioId, setSelectedAudioId] = useState("");
+  const [showDeviceSelectors, setShowDeviceSelectors] = useState(false);
+  const [videoConstraints, setVideoConstraints] = useState<MediaTrackConstraints | boolean>(true);
+  const [audioConstraints, setAudioConstraints] = useState<MediaTrackConstraints | boolean>(true);
+  const [forceDefaultConstraints, setForceDefaultConstraints] = useState(true);
+  const [hasRetried, setHasRetried] = useState(false);
+  const [webcamKey, setWebcamKey] = useState(0);
+  const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [permissionState, setPermissionState] = useState<"unknown" | "granted" | "denied" | "prompt">("unknown");
+  const [permissionLoading, setPermissionLoading] = useState(false);
   const [error, setError] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [showInitialCountdown, setShowInitialCountdown] = useState(true);
@@ -109,12 +125,16 @@ export default function InterviewPage() {
         const answeredIds = interview.answered_question_ids || [];
         setAnsweredQuestions(answeredIds);
 
-        // Auto-advance to the first unanswered question
+        // Auto-advance to the last known progress point (server state or first unanswered)
         const firstUnansweredIndex = interviewQuestions.findIndex((q: InterviewQuestion) => !answeredIds.includes(q.id));
-        if (firstUnansweredIndex > 0) {
-          console.log("Auto-advancing to first unanswered question index:", firstUnansweredIndex);
+        const serverIndex = typeof interview.current_question_index === "number" ? interview.current_question_index : 0;
+        const resumeIndex =
+          firstUnansweredIndex >= 0 ? Math.max(serverIndex, firstUnansweredIndex) : serverIndex;
+
+        if (resumeIndex > 0) {
+          console.log("Auto-advancing to resume question index:", resumeIndex);
           setTimeout(() => {
-            useStore.getState().setCurrentQuestionIndex(firstUnansweredIndex);
+            useStore.getState().setCurrentQuestionIndex(resumeIndex);
           }, 100);
         } else if (firstUnansweredIndex === -1 && interviewQuestions.length > 0) {
           setTimeout(() => {
@@ -152,9 +172,122 @@ export default function InterviewPage() {
     }
   }, [questions.length]);
 
+  useEffect(() => {
+    let mounted = true;
+    const checkPermission = async () => {
+      if (!navigator?.permissions?.query) {
+        setPermissionState("unknown");
+        return;
+      }
+      try {
+        const status = await navigator.permissions.query({ name: "camera" as PermissionName });
+        if (!mounted) return;
+        setPermissionState(status.state);
+        if (status.state === "granted") {
+          setCameraEnabled(true);
+        }
+        status.onchange = () => {
+          if (!mounted) return;
+          setPermissionState(status.state);
+          if (status.state === "granted") {
+            setCameraEnabled(true);
+          }
+        };
+      } catch {
+        setPermissionState("unknown");
+      }
+    };
+    checkPermission();
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const getMediaErrorMessage = (err: unknown) => {
+    const name = err instanceof DOMException ? err.name : "";
+    if (name === "NotFoundError") {
+      if (videoDevices.length === 0 && audioDevices.length === 0) {
+        return "No camera or microphone detected. Plug in a camera/mic or enable them, then try again.";
+      }
+      if (videoDevices.length === 0) {
+        return "No camera detected. Plug in or enable a camera, then try again.";
+      }
+      if (audioDevices.length === 0) {
+        return "No microphone detected. Plug in or enable a microphone, then try again.";
+      }
+      return "Camera or microphone not detected. Please check your devices and try again.";
+    }
+    if (name === "NotAllowedError") return "Permission denied. Please allow camera and microphone access.";
+    if (name === "OverconstrainedError") return "Selected device unavailable.";
+    return "Could not access camera or microphone. Please try again.";
+  };
+
+  const refreshDevices = useCallback(async (stream: MediaStream) => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videos = devices.filter(device => device.kind === "videoinput");
+    const audios = devices.filter(device => device.kind === "audioinput");
+    setVideoDevices(videos);
+    setAudioDevices(audios);
+
+    const currentVideoId = stream.getVideoTracks()[0]?.getSettings?.().deviceId;
+    const currentAudioId = stream.getAudioTracks()[0]?.getSettings?.().deviceId;
+
+    if (currentVideoId) {
+      setSelectedVideoId(currentVideoId);
+    } else if (!selectedVideoId && videos.length > 0) {
+      setSelectedVideoId(videos[0].deviceId);
+    }
+
+    if (currentAudioId) {
+      setSelectedAudioId(currentAudioId);
+    } else if (!selectedAudioId && audios.length > 0) {
+      setSelectedAudioId(audios[0].deviceId);
+    }
+  }, [selectedAudioId, selectedVideoId]);
+
+  useEffect(() => {
+    if (forceDefaultConstraints) {
+      setVideoConstraints(true);
+      setAudioConstraints(true);
+      return;
+    }
+
+    const videoValid = selectedVideoId && videoDevices.some(device => device.deviceId === selectedVideoId);
+    const audioValid = selectedAudioId && audioDevices.some(device => device.deviceId === selectedAudioId);
+
+    setVideoConstraints(videoValid ? { deviceId: { exact: selectedVideoId } } : true);
+    setAudioConstraints(audioValid ? { deviceId: { exact: selectedAudioId } } : true);
+  }, [forceDefaultConstraints, selectedVideoId, selectedAudioId, videoDevices, audioDevices]);
+
+  const retryCamera = useCallback(() => {
+    setForceDefaultConstraints(true);
+    setHasRetried(false);
+    setDeviceWarning("");
+    setCameraError("");
+    setWebcamKey(prev => prev + 1);
+    setCameraEnabled(true);
+  }, []);
+
+  const handleEnableCamera = () => {
+    setPermissionLoading(true);
+    setCameraError("");
+    setDeviceWarning("");
+    setForceDefaultConstraints(true);
+    setHasRetried(false);
+    setCameraEnabled(true);
+    setWebcamKey(prev => prev + 1);
+    setTimeout(() => setPermissionLoading(false), 300);
+  };
+
   const startRecording = useCallback(() => {
     if (!webcamRef.current?.stream) {
       setError("Camera not ready. Please allow camera access.");
+      return;
+    }
+    const activeQuestion = questions[currentQuestionIndex];
+    if (activeQuestion && answeredQuestions.has(activeQuestion.id)) {
+      setError("This question is already answered. Please continue to the next question.");
       return;
     }
 
@@ -468,6 +601,9 @@ export default function InterviewPage() {
       );
 
       console.log("Interview submitted successfully! Redirecting to completion page...");
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(resumeStorageKey);
+      }
       // Redirect to a friendly completion screen; user can then choose
       // to view processing status or return to dashboard.
       router.push(`/interview-complete?id=${interviewId}`);
@@ -624,7 +760,7 @@ export default function InterviewPage() {
 
       <div className="max-w-6xl mx-auto">
         {/* Camera Permission Notice */}
-        {!cameraReady && (
+        {!cameraReady && !cameraEnabled && (
           <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
             <div className="flex items-start">
               <AlertCircle className="w-5 h-5 text-yellow-600 mr-3 shrink-0 mt-0.5" />
@@ -634,6 +770,19 @@ export default function InterviewPage() {
                   This interview requires camera and microphone access. When prompted by your browser, please click
                   "Allow". Look for the camera icon in your browser's address bar if you need to change permissions.
                 </p>
+                <button
+                  onClick={handleEnableCamera}
+                  className="mt-3 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 text-sm"
+                  disabled={permissionLoading}
+                >
+                  {permissionLoading ? "Requesting access..." : "Enable Camera & Start Interview"}
+                </button>
+                {permissionState === "denied" && (
+                  <p className="text-xs text-yellow-800 mt-2">
+                    Your browser is currently blocking camera access. Use the camera icon in the address bar to allow
+                    access, then click the button again.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -708,46 +857,70 @@ export default function InterviewPage() {
 
             {/* Webcam */}
             <div className="relative bg-gray-900 rounded-lg overflow-hidden aspect-video mb-4">
-              <Webcam
-                ref={webcamRef}
-                audio={true}
-                audioConstraints={{
-                  echoCancellation: true,
-                  noiseSuppression: true,
-                  autoGainControl: true,
-                }}
-                videoConstraints={{
-                  facingMode: "user",
-                }}
-                muted={true}
-                onUserMedia={(stream) => {
-                  const audioTracks = stream.getAudioTracks();
-                  const videoTracks = stream.getVideoTracks();
-                  console.log("Media initialized - Audio tracks:", audioTracks.length);
-                  console.log("Media initialized - Video tracks:", videoTracks.length);
+              {cameraEnabled ? (
+                <Webcam
+                  key={webcamKey}
+                  ref={webcamRef}
+                  audio={true}
+                  audioConstraints={audioConstraints}
+                  videoConstraints={videoConstraints}
+                  muted={true}
+                  onUserMedia={(stream) => {
+                    setCameraError("");
+                    setDeviceWarning("");
+                    const audioTracks = stream.getAudioTracks();
+                    const videoTracks = stream.getVideoTracks();
+                    console.log("Media initialized - Audio tracks:", audioTracks.length);
+                    console.log("Media initialized - Video tracks:", videoTracks.length);
+                    refreshDevices(stream);
+                    setForceDefaultConstraints(false);
+                    setHasRetried(false);
 
                   if (audioTracks.length === 0) {
-                    setError(
-                      "Microphone not detected. Please check your browser permissions and allow microphone access."
-                    );
+                    setCameraError("No microphone detected. Plug in or enable a microphone, then try again.");
                     setCameraReady(false);
+                    setShowDeviceSelectors(true);
+                  } else if (videoTracks.length === 0) {
+                    setCameraError("No camera detected. Plug in or enable a camera, then try again.");
+                    setCameraReady(false);
+                    setShowDeviceSelectors(true);
                   } else {
                     console.log("Audio track settings:", audioTracks[0].getSettings());
                     console.log("Audio track enabled:", audioTracks[0].enabled);
                     setCameraReady(true);
-                    setError("");
+                    setCameraError("");
                   }
                 }}
                 onUserMediaError={(err) => {
                   console.error("Camera error:", err);
                   setCameraReady(false);
-                  setError(
-                    "Camera access denied. Please click the camera icon in your browser's address bar and allow camera and microphone access, then refresh the page."
-                  );
-                }}
-                className="w-full h-full object-cover"
-              />
-              {!cameraReady && !error && (
+                  setCameraError(getMediaErrorMessage(err));
+                  setShowDeviceSelectors(true);
+                  const shouldRetryWithDefaults =
+                    err instanceof DOMException &&
+                    (err.name === "NotFoundError" || err.name === "OverconstrainedError");
+
+                  if (!hasRetried && shouldRetryWithDefaults) {
+                    setHasRetried(true);
+                    setDeviceWarning("Retrying with default camera and microphone.");
+                    setForceDefaultConstraints(true);
+                      setSelectedVideoId("");
+                      setSelectedAudioId("");
+                      setWebcamKey(prev => prev + 1);
+                    }
+                  }}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
+                  <div className="text-center text-white">
+                    <VideoOff className="w-12 h-12 mx-auto mb-2" />
+                    <p>Camera access required</p>
+                    <p className="text-sm text-gray-400 mt-2">Click "Enable Camera & Start Interview" to begin</p>
+                  </div>
+                </div>
+              )}
+              {!cameraReady && cameraEnabled && !error && !cameraError && (
                 <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
                   <div className="text-center text-white">
                     <VideoOff className="w-12 h-12 mx-auto mb-2" />
@@ -760,6 +933,62 @@ export default function InterviewPage() {
 
             {/* Recording Controls */}
             <div className="space-y-3">
+              {(videoDevices.length > 1 || audioDevices.length > 1) && showDeviceSelectors && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Camera</label>
+                    <select
+                      value={selectedVideoId}
+                      onChange={(e) => {
+                        const nextId = e.target.value;
+                        setSelectedVideoId(nextId);
+                        setForceDefaultConstraints(false);
+                        setWebcamKey(prev => prev + 1);
+                      }}
+                      className="w-full bg-gray-100 text-sm px-2 py-1 rounded border border-gray-300"
+                    >
+                      {videoDevices.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || "Camera"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Microphone</label>
+                    <select
+                      value={selectedAudioId}
+                      onChange={(e) => {
+                        const nextId = e.target.value;
+                        setSelectedAudioId(nextId);
+                        setForceDefaultConstraints(false);
+                        setWebcamKey(prev => prev + 1);
+                      }}
+                      className="w-full bg-gray-100 text-sm px-2 py-1 rounded border border-gray-300"
+                    >
+                      {audioDevices.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>
+                          {device.label || "Microphone"}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+              {!showDeviceSelectors && (videoDevices.length > 1 || audioDevices.length > 1) && (
+                <button
+                  type="button"
+                  onClick={() => setShowDeviceSelectors(true)}
+                  className="text-xs text-blue-600 hover:text-blue-700"
+                >
+                  Having trouble?
+                </button>
+              )}
+              {deviceWarning && (
+                <div className="text-xs text-yellow-700 bg-yellow-50 border border-yellow-200 rounded px-3 py-2">
+                  {deviceWarning}
+                </div>
+              )}
               {/* Status Display */}
               {isSpeaking && (
                 <div className="w-full bg-blue-100 border border-blue-300 text-blue-800 py-3 rounded-lg font-semibold flex items-center justify-center">
@@ -801,6 +1030,19 @@ export default function InterviewPage() {
             </div>
 
             {/* Messages */}
+            {cameraError && (
+              <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">
+                {cameraError}
+                <div className="mt-3">
+                  <button
+                    onClick={retryCamera}
+                    className="px-3 py-1 bg-red-100 text-red-800 rounded hover:bg-red-200 text-xs"
+                  >
+                    Retry Camera
+                  </button>
+                </div>
+              </div>
+            )}
             {error && (
               <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">{error}</div>
             )}

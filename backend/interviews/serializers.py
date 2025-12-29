@@ -345,6 +345,9 @@ class InterviewSerializer(serializers.ModelSerializer):
             'position_type',
             'category_detail',
             'status',
+            'archived',
+            'is_retake',
+            'expires_at',
             'hr_decision',
             'hr_decision_reason',
             'hr_decision_at',
@@ -367,6 +370,9 @@ class InterviewSerializer(serializers.ModelSerializer):
             'submission_date',
             'completed_at',
             'status',
+            'archived',
+            'is_retake',
+            'expires_at',
             'authenticity_flag',
             'authenticity_status',
             'hr_decision',
@@ -593,12 +599,17 @@ class InterviewListSerializer(serializers.ModelSerializer):
     applicant_name = serializers.CharField(source="applicant.full_name", read_only=True)
     applicant_full_name = serializers.SerializerMethodField()
     position = serializers.SerializerMethodField()
+    is_archived = serializers.BooleanField(source="archived", read_only=True)
 
     class Meta:
         model = Interview
         fields = [
             "id",
             "status",
+            "archived",
+            "is_archived",
+            "is_retake",
+            "expires_at",
             "hr_decision",
             "created_at",
             "position_type",

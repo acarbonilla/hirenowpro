@@ -48,7 +48,8 @@ class HRPermission(BasePermission):
 
 class RolePermission(BasePermission):
     """
-    Generic role-based permission. Use as RolePermission(required_roles=[...]).
+    Generic role-based permission. Use as RolePermission(required_roles=[...])
+    or set view.required_roles = [...].
     Accepts role match (case-insensitive), or staff/superuser override.
     """
 
@@ -56,6 +57,7 @@ class RolePermission(BasePermission):
         self.required_roles = required_roles or []
 
     def has_permission(self, request, view):
+        required_roles = self.required_roles or getattr(view, "required_roles", []) or []
         user = request.user
         if not (user and getattr(user, "is_authenticated", False)):
             return False
@@ -65,7 +67,7 @@ class RolePermission(BasePermission):
 
         normalized_role = _user_type(user)
         normalized_role_upper = normalized_role.upper() if normalized_role else None
-        required_upper = [r.upper() for r in self.required_roles]
+        required_upper = [r.upper() for r in required_roles]
 
         if normalized_role_upper and normalized_role_upper in required_upper:
             return True

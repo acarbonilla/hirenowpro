@@ -184,6 +184,65 @@ class ApplicantViewSet(viewsets.ModelViewSet):
         """Create new applicant"""
         import logging
         logger = logging.getLogger(__name__)
+        from interviews.models import Interview
+
+        email = (request.data.get("email") or "").strip().lower()
+        position_type_id = request.data.get("position_type_id")
+        existing_applicant = Applicant.objects.filter(email__iexact=email).first() if email else None
+
+        if existing_applicant:
+            interview = None
+            if position_type_id:
+                interview = (
+                    Interview.objects.filter(
+                        applicant=existing_applicant,
+                        position_type_id=position_type_id,
+                    )
+                    .order_by("-created_at")
+                    .first()
+                )
+            if interview:
+                if interview.archived:
+                    return Response(
+                        {
+                            "detail": "Interview was archived and requires an HR retake.",
+                            "state": "archived",
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if interview.status in {"pending", "in_progress"}:
+                    token = generate_applicant_token(existing_applicant.id)
+                    response_serializer = ApplicantSerializer(existing_applicant)
+                    return Response(
+                        {
+                            "message": "Resume interview in progress.",
+                            "resume": True,
+                            "applicant": response_serializer.data,
+                            "token": token,
+                            "interview_id": interview.id,
+                            "redirect_url": f"/interview/{interview.id}",
+                        },
+                        status=status.HTTP_200_OK,
+                    )
+                if interview.status in {"submitted", "processing", "completed", "failed"}:
+                    return Response(
+                        {
+                            "detail": "Interview already submitted.",
+                            "state": "already_submitted",
+                        },
+                        status=status.HTTP_409_CONFLICT,
+                    )
+            token = generate_applicant_token(existing_applicant.id)
+            response_serializer = ApplicantSerializer(existing_applicant)
+            return Response(
+                {
+                    "message": "Applicant already registered.",
+                    "resume": False,
+                    "applicant": response_serializer.data,
+                    "token": token,
+                },
+                status=status.HTTP_200_OK,
+            )
 
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():

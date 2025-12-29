@@ -5,9 +5,11 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from accounts.permissions import IsApplicant
 from common.permissions import IsHRUser
 from rest_framework.settings import api_settings
-from accounts.authentication import ApplicantTokenAuthentication, HRTokenAuthentication, generate_applicant_token
+from accounts.authentication import ApplicantTokenAuthentication, HRTokenAuthentication, generate_retake_token
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from django.conf import settings
+from datetime import timedelta
 from django.db import transaction
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.exceptions import ValidationError
@@ -663,22 +665,40 @@ class InterviewViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Interview already archived."}, status=status.HTTP_400_BAD_REQUEST)
 
         reason = (request.data.get("reason") or "").strip()
+        active_retake = Interview.objects.filter(
+            applicant=interview.applicant,
+            is_retake=True,
+            archived=False,
+            status__in=["pending", "in_progress"],
+        ).exclude(id=interview.id).first()
+        if active_retake:
+            return Response(
+                {"detail": "Active retake already exists.", "retake_interview_id": active_retake.id},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if interview.hr_decision not in {"hold", "reject"} and interview.status != "failed":
+            return Response(
+                {"detail": "Retake is only allowed for failed or on-hold interviews."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         with transaction.atomic():
             interview.archived = True
             interview.save(update_fields=["archived"])
 
+            expires_at = timezone.now() + timedelta(hours=getattr(settings, "RETAKE_TOKEN_EXPIRY_HOURS", 24))
             new_interview = Interview.objects.create(
                 applicant=interview.applicant,
                 position_type=interview.position_type,
                 interview_type=interview.interview_type,
                 status="pending",
                 attempt_number=interview.attempt_number + 1,
+                is_retake=True,
+                expires_at=expires_at,
             )
 
-            selected_questions, selection_metadata = select_questions_for_interview_with_metadata(new_interview)
-            new_interview.selected_question_ids = [q.id for q in selected_questions]
-            new_interview.selected_question_metadata = selection_metadata
+            new_interview.selected_question_ids = list(interview.selected_question_ids or [])
+            new_interview.selected_question_metadata = list(interview.selected_question_metadata or [])
             new_interview.save(update_fields=["selected_question_ids", "selected_question_metadata"])
 
             InterviewAuditLog.objects.create(
@@ -691,11 +711,13 @@ class InterviewViewSet(viewsets.ModelViewSet):
                     "old_interview_id": interview.id,
                     "new_interview_id": new_interview.id,
                     "approved_by": getattr(request.user, "id", None),
+                    "approved_at": timezone.now().isoformat(),
                 },
             )
 
-        token = generate_applicant_token(interview.applicant_id)
-        interview_link = request.build_absolute_uri(f"/interview-login/{token}/")
+        token = generate_retake_token(interview.applicant_id, new_interview.id, expires_at=expires_at)
+        frontend_base = getattr(settings, "FRONTEND_BASE_URL", "http://localhost:3000").rstrip("/")
+        interview_link = f"{frontend_base}/interview-login/{token}/"
         try:
             send_applicant_email_task.delay(
                 "retake",

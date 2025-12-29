@@ -11,6 +11,7 @@ function RegisterPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setCurrentApplicant, setCurrentInterview } = useStore();
+  const resumeStorageKey = "resumeInterview";
   const [positionCode, setPositionCode] = useState<string | null>(null);
   const [positionTypeId, setPositionTypeId] = useState<number | null>(null);
   const [jobPositionName, setJobPositionName] = useState<string | null>(null);
@@ -26,6 +27,9 @@ function RegisterPageContent() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [pendingApplicationDetected, setPendingApplicationDetected] = useState(false);
+  const [resumeInterviewId, setResumeInterviewId] = useState<number | null>(null);
+  const [resumeDetected, setResumeDetected] = useState(false);
+  const [showResumeModal, setShowResumeModal] = useState(false);
   const [apiError, setApiError] = useState("");
   const [location, setLocation] = useState<GeolocationData | null>(null);
   const [locationSource, setLocationSource] = useState<"gps" | "ip" | "none">("none");
@@ -68,6 +72,32 @@ function RegisterPageContent() {
     };
     resolvePosition();
   }, [searchParams]);
+
+  const writeResumeIntent = (interviewId: number, position: string | null) => {
+    if (typeof window === "undefined") return;
+    const payload = { interviewId, position, createdAt: Date.now() };
+    sessionStorage.setItem(resumeStorageKey, JSON.stringify(payload));
+  };
+
+  const clearResumeIntent = () => {
+    if (typeof window === "undefined") return;
+    sessionStorage.removeItem(resumeStorageKey);
+  };
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !positionCode) return;
+    const raw = sessionStorage.getItem(resumeStorageKey);
+    if (!raw) return;
+    try {
+      const payload = JSON.parse(raw) as { interviewId?: number; position?: string };
+      if (payload?.interviewId && payload.position === positionCode) {
+        setResumeInterviewId(payload.interviewId);
+        setResumeDetected(true);
+      }
+    } catch {
+      sessionStorage.removeItem(resumeStorageKey);
+    }
+  }, [positionCode]);
 
   // Get geolocation on component mount
   useEffect(() => {
@@ -191,12 +221,23 @@ function RegisterPageContent() {
       const applicantResponse = await applicantAPI.register(registrationData);
       const applicant = applicantResponse.data.applicant || applicantResponse.data;
       const token = applicantResponse.data.token;
+      const resumeInterviewId = applicantResponse.data.interview_id;
+      const shouldResume = applicantResponse.data.resume === true && resumeInterviewId;
 
       if (token) {
         localStorage.setItem("applicantToken", token);
       }
 
       setCurrentApplicant(applicant);
+
+      if (shouldResume) {
+        setResumeInterviewId(resumeInterviewId);
+        setResumeDetected(true);
+        setShowResumeModal(true);
+        writeResumeIntent(resumeInterviewId, positionCode);
+        setIsSubmitting(false);
+        return;
+      }
 
       // Create interview and redirect directly
       try {
@@ -216,29 +257,63 @@ function RegisterPageContent() {
 
         console.log("DEBUG interviewResponse:", interviewResponse);
 
-        if (!interviewResponse.data?.id) {
+        const interviewPayload = interviewResponse.data?.interview || interviewResponse.data;
+        const interviewId = interviewPayload?.id || interviewResponse.data?.id;
+        if (interviewResponse.data?.resume === true && interviewId) {
+          setResumeInterviewId(interviewId);
+          setResumeDetected(true);
+          setShowResumeModal(true);
+          writeResumeIntent(interviewId, positionCode);
+          setIsSubmitting(false);
+          return;
+        }
+        if (!interviewId) {
           throw new Error("Interview ID missing from response");
         }
-        const interviewId = interviewResponse.data?.id;
-        if (interviewResponse.status !== 201 || !interviewId) {
+        if (![200, 201].includes(interviewResponse.status) || !interviewId) {
           console.error("Invalid interview creation response:", interviewResponse);
           setApiError("Unable to start interview. Please try again.");
           return;
         }
 
         console.log("Redirecting to interview:", interviewId);
+        clearResumeIntent();
         router.push(`/interview/${interviewId}`);
         return;
       } catch (error: any) {
         console.error("Failed to create interview:", error);
         console.error("Error response:", error.response?.data);
         console.error("Error status:", error.response?.status);
+        if (error.response?.status === 409 && error.response?.data?.state === "already_submitted") {
+          setApiError("This interview has already been completed and submitted.");
+          return;
+        }
+        if (error.response?.status === 409 && error.response?.data?.state === "archived") {
+          setApiError("This interview was archived. Please contact HR to request a retake.");
+          return;
+        }
         setApiError("Unable to start interview. Please try again.");
         return;
-      }
+      }
     } catch (error: any) {
       if (error.response?.data) {
         const errorData = error.response.data;
+        const state = errorData.state || "";
+        if (state === "already_submitted") {
+          setApiError("You already submitted this interview. Please wait for HR review.");
+          setIsSubmitting(false);
+          return;
+        }
+        if (state === "archived") {
+          setApiError("This interview was archived. Please contact HR to request a retake.");
+          setIsSubmitting(false);
+          return;
+        }
+        if (state === "applicant_exists") {
+          setApiError("An application already exists for this email. Please try again with your existing interview.");
+          setIsSubmitting(false);
+          return;
+        }
         const emailMessage = errorData?.details?.email?.[0] || "";
 
         if (emailMessage.includes("currently being processed")) {
@@ -379,8 +454,80 @@ function RegisterPageContent() {
           </div>
         )}
 
+        {resumeDetected && resumeInterviewId && showResumeModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+            <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
+              <h2 className="text-xl font-bold mb-2">Resume Interview</h2>
+              <p className="text-gray-700 mb-4">
+                You have an interview in progress for this position.
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  clearResumeIntent();
+                  router.push(`/interview/${resumeInterviewId}`);
+                }}
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+              >
+                Continue Interview
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowResumeModal(false);
+                  setResumeDetected(false);
+                  setResumeInterviewId(null);
+                  router.push("/positions");
+                }}
+                className="mt-3 w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm"
+              >
+                Not Now
+              </button>
+            </div>
+          </div>
+        )}
+
+        {resumeDetected && resumeInterviewId && !showResumeModal && (
+          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+            <div className="flex items-start">
+              <div className="shrink-0">
+                <svg className="h-5 w-5 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
+                  <path
+                    fillRule="evenodd"
+                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-9-1a1 1 0 011-1h2a1 1 0 110 2h-2a1 1 0 01-1-1zm1 4a1 1 0 100-2 1 1 0 000 2z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+              </div>
+              <div className="ml-3 flex-1">
+                <p className="text-blue-900 text-sm font-medium">
+                  You have an interview in progress for this position.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearResumeIntent();
+                    router.push(`/interview/${resumeInterviewId}`);
+                  }}
+                  className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                >
+                  Continue Interview
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Registration Form */}
         <form onSubmit={handleSubmit} className="bg-white shadow-lg rounded-lg p-8 space-y-6">
+          {resumeDetected && (
+            <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
+              <span className="text-sm font-semibold text-blue-900">Interview in progress</span>
+              <span className="text-xs text-blue-700">
+                You already have an interview in progress for this position.
+              </span>
+            </div>
+          )}
           {/* First Name */}
           <div>
             <label htmlFor="first_name" className="block text-sm font-medium text-gray-700 mb-2">
@@ -489,7 +636,7 @@ function RegisterPageContent() {
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={isSubmitting || pendingApplicationDetected}
+            disabled={isSubmitting || pendingApplicationDetected || resumeDetected}
             className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center"
           >
             {isSubmitting ? (

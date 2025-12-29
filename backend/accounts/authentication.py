@@ -7,11 +7,13 @@ from applicants.models import Applicant
 from datetime import datetime, timedelta
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 
 APPLICANT_SECRET = settings.APPLICANT_SECRET
 APPLICANT_TOKEN_EXPIRY_HOURS = getattr(settings, "APPLICANT_TOKEN_EXPIRY_HOURS", 6)
 PHASE2_TOKEN_EXPIRY_HOURS = getattr(settings, "PHASE2_TOKEN_EXPIRY_HOURS", 24)
+RETAKE_TOKEN_EXPIRY_HOURS = getattr(settings, "RETAKE_TOKEN_EXPIRY_HOURS", 24)
 
 
 def validate_hr_access(user):
@@ -56,6 +58,22 @@ def generate_phase2_token(applicant, expiry_hours=None):
     applicant.phase2_token_issued_at = issued_at
     applicant.save(update_fields=["phase2_token_issued_at"])
     return token
+
+
+def generate_retake_token(applicant_id, interview_id, expiry_hours=None, expires_at=None):
+    if expires_at is None:
+        expiry_hours = expiry_hours or RETAKE_TOKEN_EXPIRY_HOURS
+        expires_at = datetime.utcnow() + timedelta(hours=expiry_hours)
+    payload = {
+        "sub": "applicant",
+        "applicant_id": applicant_id,
+        "interview_id": interview_id,
+        "exp": expires_at,
+        "expires_at": expires_at.isoformat(),
+        "type": "applicant",
+        "phase": "retake",
+    }
+    return jwt.encode(payload, APPLICANT_SECRET, algorithm="HS256")
 
 
 class ApplicantTokenAuthentication(BaseAuthentication):
@@ -109,7 +127,7 @@ class ApplicantTokenAuthentication(BaseAuthentication):
 
         # Block phase1 tokens if interview already completed
         phase = payload.get("phase")
-        if getattr(applicant, "interview_completed", False) and phase != "phase2":
+        if getattr(applicant, "interview_completed", False) and phase not in {"phase2", "retake"}:
             raise AuthenticationFailed("Interview already completed")
 
         # For phase2 tokens, ensure matches latest issued_at if recorded
@@ -122,6 +140,27 @@ class ApplicantTokenAuthentication(BaseAuthentication):
                         raise AuthenticationFailed("Token expired")
                 except Exception:
                     raise AuthenticationFailed("Token expired")
+
+        if phase == "retake":
+            interview_id = payload.get("interview_id")
+            if not interview_id:
+                raise AuthenticationFailed("Invalid applicant token payload")
+            try:
+                from interviews.models import Interview
+
+                interview = Interview.objects.filter(
+                    id=interview_id,
+                    applicant_id=applicant_id,
+                    archived=False,
+                ).first()
+            except Exception:
+                interview = None
+            if not interview:
+                raise AuthenticationFailed("Interview not found")
+            if interview.status in {"submitted", "completed", "failed"}:
+                raise AuthenticationFailed("Interview already completed")
+            if interview.expires_at and interview.expires_at < timezone.now():
+                raise AuthenticationFailed("Token expired")
 
         # Mark as authenticated
         setattr(applicant, "is_authenticated", True)

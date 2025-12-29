@@ -645,3 +645,44 @@ class VideoResponseValidationTest(APITestCase):
         response = self.client.post(url, video_data, format="multipart")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("Invalid question for this position", str(response.data))
+
+
+class HRResendQRPermissionTest(APITestCase):
+    def setUp(self):
+        from accounts.models import User
+
+        self.client = APIClient()
+        self.applicant = Applicant.objects.create(
+            first_name="QR",
+            last_name="Applicant",
+            email="qr@applicant.com",
+            phone="5550001111",
+            application_source="online",
+        )
+        self.hr_user = User.objects.create_user(
+            username="hr_user",
+            password="pass",
+            email="hr_user@example.com",
+            role="hr",
+        )
+        self.non_hr_user = User.objects.create_user(
+            username="basic_user",
+            password="pass",
+            email="basic_user@example.com",
+            role="applicant",
+        )
+        self.url = reverse("hr-resend-qr", args=[self.applicant.id])
+
+    def test_hr_user_can_resend_qr(self):
+        self.client.force_authenticate(user=self.hr_user)
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_non_hr_user_forbidden(self):
+        self.client.force_authenticate(user=self.non_hr_user)
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_anonymous_unauthorized(self):
+        response = self.client.post(self.url)
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)

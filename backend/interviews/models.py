@@ -215,6 +215,15 @@ class Interview(models.Model):
         blank=True,
         help_text="Last email delivery error, if any",
     )
+    is_retake = models.BooleanField(
+        default=False,
+        help_text="True when interview was created as an HR-approved retake",
+    )
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Expiration timestamp for interview access",
+    )
     selected_question_ids = models.JSONField(
         default=list,
         blank=True,

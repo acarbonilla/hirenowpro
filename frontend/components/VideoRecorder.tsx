@@ -22,8 +22,14 @@ export default function VideoRecorder({
     const [recordingDuration, setRecordingDuration] = useState(0);
     const [audioLevel, setAudioLevel] = useState(0);
     const [permissionError, setPermissionError] = useState("");
+    const [deviceWarning, setDeviceWarning] = useState("");
     const [hasAudio, setHasAudio] = useState(false);
     const [recordingFormat, setRecordingFormat] = useState<string>("");
+    const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+    const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+    const [selectedVideoId, setSelectedVideoId] = useState("");
+    const [selectedAudioId, setSelectedAudioId] = useState("");
+    const [showDeviceSelectors, setShowDeviceSelectors] = useState(false);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -47,24 +53,128 @@ export default function VideoRecorder({
         };
     }, []);
 
-    const startCamera = async () => {
+    const getDomExceptionName = (err: unknown) => {
+        return err instanceof DOMException ? err.name : "";
+    };
+
+    const getMediaErrorMessage = (err: unknown) => {
+        const name = getDomExceptionName(err);
+        if (name === "NotFoundError") {
+            if (videoDevices.length === 0 && audioDevices.length === 0) {
+                return "No camera or microphone detected. Plug in a camera/mic or enable them, then try again.";
+            }
+            if (videoDevices.length === 0) {
+                return "No camera detected. Plug in or enable a camera, then try again.";
+            }
+            if (audioDevices.length === 0) {
+                return "No microphone detected. Plug in or enable a microphone, then try again.";
+            }
+            return "Camera or microphone not found. Please check your devices and try again.";
+        }
+        if (name === "NotAllowedError") return "Permission denied.";
+        if (name === "OverconstrainedError") return "Selected device unavailable.";
+        return "Could not access camera or microphone. Please allow permissions.";
+    };
+
+    const stopAudioAnalysis = () => {
+        if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = null;
+        }
+        if (audioContextRef.current) {
+            audioContextRef.current.close();
+            audioContextRef.current = null;
+        }
+        analyserRef.current = null;
+        setAudioLevel(0);
+        setHasAudio(false);
+    };
+
+    const refreshDevices = async (mediaStream: MediaStream) => {
+        if (!navigator.mediaDevices?.enumerateDevices) return;
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videos = devices.filter(device => device.kind === "videoinput");
+        const audios = devices.filter(device => device.kind === "audioinput");
+        setVideoDevices(videos);
+        setAudioDevices(audios);
+
+        const videoTrack = mediaStream.getVideoTracks()[0];
+        const audioTrack = mediaStream.getAudioTracks()[0];
+        const currentVideoId = videoTrack?.getSettings?.().deviceId;
+        const currentAudioId = audioTrack?.getSettings?.().deviceId;
+
+        if (currentVideoId) {
+            setSelectedVideoId(currentVideoId);
+        } else if (!selectedVideoId && videos.length > 0) {
+            setSelectedVideoId(videos[0].deviceId);
+        }
+
+        if (currentAudioId) {
+            setSelectedAudioId(currentAudioId);
+        } else if (!selectedAudioId && audios.length > 0) {
+            setSelectedAudioId(audios[0].deviceId);
+        }
+    };
+
+    const startCamera = async (videoDeviceId?: string, audioDeviceId?: string, keepWarning = false) => {
         try {
+            setPermissionError("");
+            if (!keepWarning) {
+                setDeviceWarning("");
+            }
+            stopCamera();
+            stopAudioAnalysis();
+
+            const videoIdValid = videoDeviceId && videoDevices.some(device => device.deviceId === videoDeviceId);
+            const audioIdValid = audioDeviceId && audioDevices.some(device => device.deviceId === audioDeviceId);
+
+            if (videoDeviceId && videoDevices.length > 0 && !videoIdValid) {
+                setDeviceWarning("Selected camera unavailable. Falling back to default.");
+                videoDeviceId = undefined;
+            }
+
+            if (audioDeviceId && audioDevices.length > 0 && !audioIdValid) {
+                setDeviceWarning("Selected microphone unavailable. Falling back to default.");
+                audioDeviceId = undefined;
+            }
+
+            const constraints: MediaStreamConstraints = {
+                video: videoDeviceId ? { deviceId: { exact: videoDeviceId } } : true,
+                audio: audioDeviceId ? { deviceId: { exact: audioDeviceId } } : true,
+            };
             const mediaStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: true
+                video: constraints.video,
+                audio: constraints.audio
             });
             setStream(mediaStream);
             if (videoRef.current) {
                 videoRef.current.srcObject = mediaStream;
             }
-            setPermissionError("");
 
             // Setup audio analysis
             setupAudioAnalysis(mediaStream);
+            await refreshDevices(mediaStream);
+            const audioTracks = mediaStream.getAudioTracks();
+            const videoTracks = mediaStream.getVideoTracks();
+            if (audioTracks.length === 0) {
+                setPermissionError("No microphone detected. Plug in or enable a microphone, then try again.");
+                setShowDeviceSelectors(true);
+            } else if (videoTracks.length === 0) {
+                setPermissionError("No camera detected. Plug in or enable a camera, then try again.");
+                setShowDeviceSelectors(true);
+            }
 
         } catch (err) {
+            const name = getDomExceptionName(err);
+            if (name === "NotFoundError" && (videoDeviceId || audioDeviceId)) {
+                setDeviceWarning("Selected device not found. Falling back to default devices.");
+                setShowDeviceSelectors(true);
+                await startCamera(undefined, undefined, true);
+                return;
+            }
             console.error("Error accessing camera:", err);
-            setPermissionError("Could not access camera or microphone. Please allow permissions.");
+            setPermissionError(getMediaErrorMessage(err));
+            setShowDeviceSelectors(true);
         }
     };
 
@@ -183,7 +293,7 @@ export default function VideoRecorder({
         setRecordedVideo(null);
         setRecordedChunks([]);
         setRecordingFormat("");
-        startCamera();
+        startCamera(selectedVideoId, selectedAudioId);
     };
 
     const formatTime = (seconds: number) => {
@@ -272,6 +382,58 @@ export default function VideoRecorder({
 
             {/* Controls */}
             <div className="bg-gray-900 p-4 border-t border-gray-800">
+                {deviceWarning && (
+                    <p className="text-xs text-yellow-400 mb-3">{deviceWarning}</p>
+                )}
+                {(videoDevices.length > 1 || audioDevices.length > 1) && showDeviceSelectors && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+                        <div>
+                            <label className="block text-xs text-gray-400 mb-1">Camera</label>
+                            <select
+                                value={selectedVideoId}
+                                onChange={(e) => {
+                                    const nextId = e.target.value;
+                                    setSelectedVideoId(nextId);
+                                    startCamera(nextId, selectedAudioId);
+                                }}
+                                className="w-full bg-gray-800 text-white text-sm px-2 py-1 rounded"
+                            >
+                                {videoDevices.map(device => (
+                                    <option key={device.deviceId} value={device.deviceId}>
+                                        {device.label || "Camera"}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-xs text-gray-400 mb-1">Microphone</label>
+                            <select
+                                value={selectedAudioId}
+                                onChange={(e) => {
+                                    const nextId = e.target.value;
+                                    setSelectedAudioId(nextId);
+                                    startCamera(selectedVideoId, nextId);
+                                }}
+                                className="w-full bg-gray-800 text-white text-sm px-2 py-1 rounded"
+                            >
+                                {audioDevices.map(device => (
+                                    <option key={device.deviceId} value={device.deviceId}>
+                                        {device.label || "Microphone"}
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
+                    </div>
+                )}
+                {!showDeviceSelectors && (videoDevices.length > 1 || audioDevices.length > 1) && (
+                    <button
+                        type="button"
+                        onClick={() => setShowDeviceSelectors(true)}
+                        className="text-xs text-blue-300 hover:text-blue-200"
+                    >
+                        Having trouble?
+                    </button>
+                )}
                 <div className="flex items-center justify-center space-x-6">
                     {!recordedVideo ? (
                         !isRecording ? (

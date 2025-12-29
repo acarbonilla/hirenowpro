@@ -265,7 +265,19 @@ export default function HRResultsPage() {
 
       {results.length === 0 ? (
         <div className="text-center text-gray-500 py-10 text-lg">
-          No interview reviews found for this filter.
+          {decisionFilter === "pending" ? (
+            <div className="space-y-2">
+              <p>No interviews are currently ready for HR review.</p>
+              <p className="text-sm text-gray-400">
+                Retake interviews will appear here once submitted and AI analysis is complete.
+              </p>
+              <p className="text-xs text-gray-400">
+                Interviews in progress or awaiting AI analysis are not shown here.
+              </p>
+            </div>
+          ) : (
+            "No interview reviews found for this filter."
+          )}
         </div>
       ) : (
         <>

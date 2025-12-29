@@ -77,6 +77,8 @@ export interface Interview {
   attempt_number?: number;
   current_question_index?: number;
   archived?: boolean;
+  is_retake?: boolean;
+  expires_at?: string | null;
   created_at: string;
   completed_at?: string | null;
   position_type?: string | null;

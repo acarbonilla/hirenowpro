@@ -57,19 +57,57 @@ class PublicInterviewCreateView(generics.CreateAPIView):
         if not position_type:
             raise ValidationError({"position_code": "Position type not found"})
 
-        try:
-            interview = Interview.objects.create(
-                applicant=applicant,
-                position_type=position_type,
-                interview_type=interview_type,
-                status="pending",
+        with transaction.atomic():
+            active_interview = (
+                Interview.objects.select_for_update()
+                .filter(
+                    applicant=applicant,
+                    position_type=position_type,
+                    archived=False,
+                    status__in=["pending", "in_progress"],
+                )
+                .order_by("-created_at")
+                .first()
             )
-        except Exception:
-            logger.exception(
-                "Interview create failed",
-                extra={"applicant_id": applicant_id, "position_code": position_code},
+            if active_interview:
+                serializer = self.get_serializer(active_interview)
+                return Response(
+                    {
+                        "resume": True,
+                        "message": "Interview in progress.",
+                        "interview": serializer.data,
+                        "id": active_interview.id,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+
+            latest_interview = (
+                Interview.objects.filter(applicant=applicant, position_type=position_type)
+                .order_by("-created_at")
+                .first()
             )
-            return Response({"detail": "Interview creation failed."}, status=status.HTTP_400_BAD_REQUEST)
+            if latest_interview:
+                if latest_interview.archived:
+                    return Response({"detail": "Interview archived.", "state": "archived"}, status=status.HTTP_409_CONFLICT)
+                if latest_interview.status in ["submitted", "processing", "completed", "failed"]:
+                    return Response(
+                        {"detail": "Interview already submitted.", "state": "already_submitted"},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+            try:
+                interview = Interview.objects.create(
+                    applicant=applicant,
+                    position_type=position_type,
+                    interview_type=interview_type,
+                    status="pending",
+                )
+            except Exception:
+                logger.exception(
+                    "Interview create failed",
+                    extra={"applicant_id": applicant_id, "position_code": position_code},
+                )
+                return Response({"detail": "Interview creation failed."}, status=status.HTTP_400_BAD_REQUEST)
 
         if not interview:
             return Response({"detail": "Interview creation failed."}, status=status.HTTP_400_BAD_REQUEST)
@@ -102,6 +140,8 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         interview = self.get_object()
         if interview.archived:
             return Response({"detail": "Interview has been archived."}, status=status.HTTP_400_BAD_REQUEST)
+        if interview.expires_at and interview.expires_at < timezone.now():
+            return Response({"detail": "Interview link has expired."}, status=status.HTTP_400_BAD_REQUEST)
 
         answered_ids = set(interview.video_responses.values_list("question_id", flat=True))
         updated_fields = []

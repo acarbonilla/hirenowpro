@@ -41,6 +41,7 @@ const getPositionIcon = (code: string): string => {
 
 export default function OpenPositionsPage() {
   const router = useRouter();
+  const resumeStorageKey = "resumeInterview";
   const [positions, setPositions] = useState<JobPosition[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedJob, setSelectedJob] = useState<JobPosition | null>(null);
@@ -48,9 +49,24 @@ export default function OpenPositionsPage() {
   const [keyword, setKeyword] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("");
+  const [resumeIntent, setResumeIntent] = useState<{ interviewId: number; position?: string } | null>(null);
 
   useEffect(() => {
     fetchPositions();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = sessionStorage.getItem(resumeStorageKey);
+    if (!raw) return;
+    try {
+      const payload = JSON.parse(raw) as { interviewId?: number; position?: string };
+      if (payload?.interviewId) {
+        setResumeIntent({ interviewId: payload.interviewId, position: payload.position });
+      }
+    } catch {
+      sessionStorage.removeItem(resumeStorageKey);
+    }
   }, []);
 
   useEffect(() => {
@@ -190,6 +206,23 @@ export default function OpenPositionsPage() {
 
       {/* Positions Grid */}
       <div className="max-w-6xl mx-auto px-4 md:px-6 lg:px-8 py-10 space-y-8">
+        {resumeIntent && (
+          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-blue-900">You have an interview in progress.</p>
+              <p className="text-xs text-blue-700">Resume where you left off for this position.</p>
+            </div>
+            <button
+              onClick={() => {
+                sessionStorage.removeItem(resumeStorageKey);
+                router.push(`/interview/${resumeIntent.interviewId}`);
+              }}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+            >
+              Resume Interview
+            </button>
+          </div>
+        )}
         <div>
           <h2 className="text-2xl font-bold text-gray-900 mb-2">Available Positions</h2>
           <p className="text-gray-600">{filteredPositions.length} open positions • Select a job to see details</p>
