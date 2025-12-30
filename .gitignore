@@ -23,3 +23,8 @@ staticfiles/
 # System
 .DS_Store
 Thumbs.db
+
+# Local docs and notes
+certification/
+document/
+journal/

@@ -79,6 +79,22 @@ class RolePermission(BasePermission):
             return False
 
 
+class PublicOrHRManager(BasePermission):
+    """
+    Allow public/applicant access, but restrict authenticated HR access to HR staff roles.
+    """
+
+    allowed_roles = {"hr_manager", "hr_recruiter", "admin", "superadmin", "applicant"}
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not getattr(user, "is_authenticated", False):
+            return True
+        if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
+            return True
+        return _user_type(user) in self.allowed_roles
+
+
 class ApplicantOrHR(BasePermission):
     """
     Allow either applicant token or HR/admin user.

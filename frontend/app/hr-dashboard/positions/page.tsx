@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
+import { authAPI } from "@/lib/api";
 import { Plus, Edit2, Trash2, Save, X, Briefcase } from "lucide-react";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
@@ -33,6 +34,8 @@ export default function PositionsManagementPage() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [canEdit, setCanEdit] = useState(false);
+  const [isReadOnly, setIsReadOnly] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
   const [officesOptions, setOfficesOptions] = useState<{ id: number; name: string; address?: string }[]>([]);
@@ -56,10 +59,39 @@ export default function PositionsManagementPage() {
   const selectedCategory = categoriesOptions.find((c) => c.id === (formData.category ?? -1));
 
   useEffect(() => {
-    fetchPositions();
-    fetchOffices();
-    fetchCategories();
+    initialize();
   }, []);
+
+  const initialize = async () => {
+    const allowed = await checkAccess();
+    if (!allowed) return;
+    await Promise.all([fetchPositions(), fetchOffices(), fetchCategories()]);
+  };
+
+  const checkAccess = async () => {
+    const token = getHRToken();
+    if (!token) {
+      router.push("/hr-login");
+      return false;
+    }
+
+    try {
+      const authRes = await authAPI.checkAuth();
+      const perms = authRes.data?.permissions || {};
+      const isHRStaff = perms.is_hr_recruiter || perms.is_hr_manager || perms.is_superuser;
+      if (!isHRStaff) {
+        router.push("/hr-login");
+        return false;
+      }
+      const canEditPositions = perms.is_hr_recruiter || perms.is_superuser;
+      setCanEdit(canEditPositions);
+      setIsReadOnly(!canEditPositions);
+      return true;
+    } catch (err) {
+      router.push("/hr-login");
+      return false;
+    }
+  };
 
   const fetchPositions = async () => {
     try {
@@ -107,6 +139,10 @@ export default function PositionsManagementPage() {
   };
 
   const handleAdd = () => {
+    if (!canEdit) {
+      setError("You have read-only access to positions.");
+      return;
+    }
     setFormData({
       code: "",
       name: "",
@@ -135,6 +171,10 @@ export default function PositionsManagementPage() {
   };
 
   const handleEdit = (position: Position) => {
+    if (!canEdit) {
+      setError("You have read-only access to positions.");
+      return;
+    }
     setFormData({
       code: position.code,
       name: position.name,
@@ -155,6 +195,10 @@ export default function PositionsManagementPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canEdit) {
+      setError("You have read-only access to positions.");
+      return;
+    }
     try {
       const token = getHRToken();
       if (!token) {
@@ -189,6 +233,10 @@ export default function PositionsManagementPage() {
   };
 
   const handleDelete = async (id: number) => {
+    if (!canEdit) {
+      setError("You have read-only access to positions.");
+      return;
+    }
     if (!confirm("Are you sure you want to delete this position? This may affect existing interviews.")) {
       return;
     }
@@ -212,6 +260,10 @@ export default function PositionsManagementPage() {
   };
 
   const toggleActive = async (position: Position) => {
+    if (!canEdit) {
+      setError("You have read-only access to positions.");
+      return;
+    }
     try {
       const token = getHRToken();
       if (!token) {
@@ -260,13 +312,22 @@ export default function PositionsManagementPage() {
             </div>
             <button
               onClick={handleAdd}
-              className="flex items-center space-x-2 bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg transition-colors"
+              disabled={!canEdit}
+              className={`flex items-center space-x-2 px-4 py-2 rounded-lg transition-colors ${
+                canEdit ? "bg-purple-600 hover:bg-purple-700 text-white" : "bg-gray-200 text-gray-500 cursor-not-allowed"
+              }`}
             >
               <Plus className="h-5 w-5" />
-              <span>Add Position</span>
+              <span>{canEdit ? "Add Position" : "Read-only"}</span>
             </button>
           </div>
         </div>
+
+        {isReadOnly && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-lg mb-6">
+            Positions are read-only for HR Managers. Contact an HR Recruiter to make changes.
+          </div>
+        )}
 
         {/* Error Message */}
         {error && (
@@ -340,14 +401,20 @@ export default function PositionsManagementPage() {
                 <div className="mt-6 border-t pt-4 flex items-center justify-end space-x-4">
                   <button
                     onClick={() => handleEdit(position)}
-                    className="text-blue-600 hover:underline text-sm flex items-center space-x-1"
+                    disabled={!canEdit}
+                    className={`text-sm flex items-center space-x-1 ${
+                      canEdit ? "text-blue-600 hover:underline" : "text-gray-400 cursor-not-allowed"
+                    }`}
                   >
                     <Edit2 className="h-4 w-4" />
                     <span>Edit</span>
                   </button>
                   <button
                     onClick={() => handleDelete(position.id)}
-                    className="text-red-600 hover:underline text-sm flex items-center space-x-1"
+                    disabled={!canEdit}
+                    className={`text-sm flex items-center space-x-1 ${
+                      canEdit ? "text-red-600 hover:underline" : "text-gray-400 cursor-not-allowed"
+                    }`}
                   >
                     <Trash2 className="h-4 w-4" />
                     <span>Delete</span>

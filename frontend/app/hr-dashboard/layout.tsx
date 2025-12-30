@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { clearHRAuth, getHRUser, isHRAuthenticated, isHRManager } from "@/lib/auth-hr";
+import { clearHRAuth, getHRUser, isHRAuthenticated } from "@/lib/auth-hr";
 import { authAPI } from "@/lib/api";
 
 export default function HRDashboardLayout({ children }: { children: React.ReactNode }) {
@@ -13,6 +13,7 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
   const [permissions, setPermissions] = useState<any>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [isForbidden, setIsForbidden] = useState(false);
 
   useEffect(() => {
     checkAccess();
@@ -37,7 +38,8 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
         return;
       }
 
-      if (perms.is_it_support && !perms.is_hr_manager && !perms.is_hr_recruiter) {
+      const isITSupportOnly = perms.is_it_support && !perms.is_hr_manager && !perms.is_hr_recruiter && !perms.is_superuser;
+      if (isITSupportOnly && !pathname.startsWith("/hr-dashboard/token-monitoring")) {
         router.push("/it-dashboard");
         return;
       }
@@ -46,6 +48,19 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
         router.push("/hr-login");
         return;
       }
+
+      const restrictedManagerPaths = [
+        "/hr-dashboard/questions",
+        "/hr-dashboard/question-types",
+        "/hr-dashboard/job-categories",
+        "/hr-dashboard/users",
+        "/hr-dashboard/ai-comparison",
+      ];
+      const isManagerRoute = restrictedManagerPaths.some(
+        (route) => pathname === route || pathname.startsWith(`${route}/`)
+      );
+      const canAccessManagerRoutes = perms.is_hr_manager || perms.is_superuser;
+      setIsForbidden(isManagerRoute && !canAccessManagerRoutes);
 
       const userData = getHRUser();
       setUser(userData);
@@ -79,34 +94,92 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
     );
   }
 
-  const baseNavigation = [
-    { name: "Overview", href: "/hr-dashboard", icon: "🏠" },
-    { name: "HR Review Queue", href: "/hr-dashboard/review-queue", icon: "📝" },
-    { name: "Interview Review", href: "/hr-dashboard/results", icon: "📊" },
-    { name: "Interview Records", href: "/hr-dashboard/history", icon: "🗂" },
-    { name: "Applicants", href: "/hr-dashboard/applicants", icon: "👥" },
-    { name: "Analytics", href: "/hr-dashboard/analytics", icon: "📈" },
-    { name: "AI vs HR Comparison", href: "/hr-dashboard/ai-comparison", icon: "🤖" },
-    { name: "Positions", href: "/hr-dashboard/positions", icon: "🧭" },
-    { name: "Questions", href: "/hr-dashboard/questions", icon: "❓" },
-    { name: "Question Types", href: "/hr-dashboard/question-types", icon: "📄" },
+  if (isForbidden) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100 p-6">
+        <div className="max-w-lg w-full bg-white border border-gray-200 rounded-xl p-8 text-center shadow-sm">
+          <div className="text-4xl font-bold text-red-600">403</div>
+          <h1 className="mt-2 text-2xl font-semibold text-gray-900">Access denied</h1>
+          <p className="mt-2 text-gray-600">
+            This page is restricted to HR Managers only. Please contact your administrator if you believe you should
+            have access.
+          </p>
+          <button
+            onClick={() => router.push("/hr-dashboard")}
+            className="mt-6 px-4 py-2 rounded-lg bg-purple-600 text-white hover:bg-purple-700 transition-colors"
+          >
+            Back to dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  type NavItem =
+    | { type: "link"; name: string; href: string; icon: string }
+    | { type: "section"; label: string };
+
+  const baseNavigation: NavItem[] = [
+    { type: "link", name: "Overview", href: "/hr-dashboard", icon: "OV" },
+    { type: "link", name: "HR Review Queue", href: "/hr-dashboard/review-queue", icon: "RQ" },
+    { type: "link", name: "Interview Review", href: "/hr-dashboard/results", icon: "IR" },
+    { type: "link", name: "Interview Records", href: "/hr-dashboard/history", icon: "REC" },
+    { type: "link", name: "Applicants", href: "/hr-dashboard/applicants", icon: "APP" },
+    { type: "link", name: "Positions", href: "/hr-dashboard/positions", icon: "POS" },
+    { type: "link", name: "Analytics", href: "/hr-dashboard/analytics", icon: "AN" },
   ];
 
-  const withRestricted = () => {
-    const items = [...baseNavigation];
+  const managerToolsNavigation: NavItem[] = [
+    { type: "link", name: "AI vs HR Comparison", href: "/hr-dashboard/ai-comparison", icon: "AI" },
+  ];
+
+  const governanceNavigation: NavItem[] = [
+    { type: "link", name: "Questions", href: "/hr-dashboard/questions", icon: "Q" },
+    { type: "link", name: "Question Types", href: "/hr-dashboard/question-types", icon: "QT" },
+    { type: "link", name: "Job Categories", href: "/hr-dashboard/job-categories", icon: "CAT" },
+    { type: "link", name: "Users", href: "/hr-dashboard/users", icon: "USR" },
+  ];
+
+  const tokenMonitoringItem: NavItem = { type: "link", name: "Token Monitoring", href: "/hr-dashboard/token-monitoring", icon: "TOK" };
+
+  const buildNavigation = () => {
+    const isHRManagerRole = permissions?.is_hr_manager || permissions?.is_superuser;
+    const isHRRecruiterRole = permissions?.is_hr_recruiter;
+    const isHRStaffRole = isHRManagerRole || isHRRecruiterRole;
+    const isITSupportOnly = permissions?.is_it_support && !isHRStaffRole && !permissions?.is_superuser;
+
+    if (isITSupportOnly) {
+      return [tokenMonitoringItem];
+    }
+
+    const items = isHRStaffRole ? [...baseNavigation] : [];
+
+    if (isHRManagerRole && managerToolsNavigation.length > 0) {
+      items.push({ type: "section", label: "Manager Tools" });
+      items.push(...managerToolsNavigation);
+    }
+
     if (permissions?.is_hr_manager || permissions?.is_it_support || permissions?.is_superuser) {
-      items.splice(6, 0, { name: "Token Monitoring", href: "/hr-dashboard/token-monitoring", icon: "🔑" });
+      const analyticsIndex = items.findIndex(
+        (item) => item.type === "link" && item.href === "/hr-dashboard/analytics"
+      );
+      if (analyticsIndex >= 0) {
+        items.splice(analyticsIndex + 1, 0, tokenMonitoringItem);
+      } else {
+        items.push(tokenMonitoringItem);
+      }
     }
-    if (permissions?.is_superuser) {
-      items.push({ name: "Job Categories", href: "/hr-dashboard/job-categories", icon: "💼" });
+
+    if (isHRManagerRole) {
+      items.push({ type: "section", label: "Governance" });
+      items.push(...governanceNavigation);
     }
-    if (permissions?.is_hr_manager || permissions?.is_superuser || isHRManager()) {
-      items.push({ name: "Users", href: "/hr-dashboard/users", icon: "👤" });
-    }
+
     return items;
   };
 
-  const navigation = withRestricted();
+  const navigation = buildNavigation();
+
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -134,6 +207,17 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
 
           <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
             {navigation.map((item) => {
+              if (item.type === "section") {
+                return (
+                  <div
+                    key={`section-${item.label}`}
+                    className="px-4 pt-4 text-xs font-semibold uppercase tracking-wider text-purple-200/80"
+                  >
+                    {item.label}
+                  </div>
+                );
+              }
+
               const isActive = pathname === item.href;
               return (
                 <Link

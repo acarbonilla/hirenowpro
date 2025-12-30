@@ -2,7 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from accounts.permissions import IsApplicant
+from accounts.permissions import IsApplicant, PublicOrHRManager, RolePermission
 from common.permissions import IsHRUser
 from rest_framework.settings import api_settings
 from accounts.authentication import ApplicantTokenAuthentication, HRTokenAuthentication, generate_retake_token
@@ -44,28 +44,13 @@ class JobCategoryViewSet(viewsets.ModelViewSet):
 
     queryset = PositionType.objects.all().order_by('order', 'name')
     serializer_class = JobCategorySerializer
-    permission_classes = [IsAuthenticated, IsHRUser]
-
+    permission_classes = [IsAuthenticated, RolePermission]
+    required_roles = ["HR_MANAGER"]
 
     def get_permissions(self):
-        """
-        Allow authenticated users; write actions require staff/permission.
-        """
-        class ManageJobCategoriesPermission(IsAuthenticated):
-            def has_permission(self_inner, request, view):
-                if not super().has_permission(request, view):
-                    return False
-                # allow read for any authenticated HR/staff; allow write if staff or perm
-                if request.method in ["GET", "HEAD", "OPTIONS"]:
-                    return True
-                user = request.user
-                return bool(
-                    getattr(user, "is_superuser", False)
-                    or getattr(user, "is_staff", False)
-                    or user.has_perm("interviews.manage_job_categories")
-                )
-
-        return [IsAuthenticated(), IsHRUser(), ManageJobCategoriesPermission()]
+        if self.action in ["list", "retrieve"]:
+            return [IsAuthenticated(), RolePermission(required_roles=["HR_MANAGER", "HR_RECRUITER"])]
+        return [IsAuthenticated(), RolePermission(required_roles=["HR_MANAGER"])]
 
     def get_queryset(self):
         """Filter to active types only if requested"""
@@ -95,25 +80,9 @@ class JobPositionViewSet(viewsets.ModelViewSet):
         """
         Public read, HR-only write.
         """
-
-        class ManageJobPositionsPermission(IsAuthenticated):
-            def has_permission(self_inner, request, view):
-                if not super().has_permission(request, view):
-                    return False
-                if request.method in ["GET", "HEAD", "OPTIONS"]:
-                    return True
-                user = request.user
-                return bool(
-                    getattr(user, "is_superuser", False)
-                    or getattr(user, "is_staff", False)
-                    or user.has_perm("interviews.add_jobposition")
-                    or user.has_perm("interviews.change_jobposition")
-                    or user.has_perm("interviews.delete_jobposition")
-                )
-
         if self.action in ["list", "retrieve"]:
-            return [AllowAny()]
-        return [IsAuthenticated(), IsHRUser(), ManageJobPositionsPermission()]
+            return [PublicOrHRManager()]
+        return [IsAuthenticated(), IsHRUser(), RolePermission(required_roles=["HR_RECRUITER"])]
 
     def get_serializer_class(self):
         if self.action in ["list", "retrieve"]:
@@ -153,7 +122,8 @@ class QuestionTypeViewSet(viewsets.ModelViewSet):
     
     queryset = QuestionType.objects.all().order_by('order', 'name')
     serializer_class = QuestionTypeSerializer
-    permission_classes = [IsAuthenticated, IsHRUser]
+    permission_classes = [IsAuthenticated, RolePermission]
+    required_roles = ["HR_MANAGER"]
     
     def get_queryset(self):
         """Filter to active types only if requested"""
@@ -228,12 +198,8 @@ class InterviewQuestionViewSet(viewsets.ModelViewSet):
     
     queryset = InterviewQuestion.objects.select_related('question_type', 'position_type', 'category').filter(is_active=True).order_by('order')
     serializer_class = InterviewQuestionSerializer
-    
-    def get_permissions(self):
-        """Allow anyone to list/retrieve questions, but require auth for create/update/delete"""
-        if self.action in ['list', 'retrieve']:
-            return [AllowAny()]
-        return [IsAuthenticated()]
+    permission_classes = [IsAuthenticated, RolePermission]
+    required_roles = ["HR_MANAGER"]
     
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:

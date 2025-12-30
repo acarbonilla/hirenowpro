@@ -27,7 +27,6 @@ api.interceptors.request.use(
       "/training/modules/",
       "/training/sessions/",
       "/interviews/",
-      "/questions/",
       "/analysis/",
     ];
 

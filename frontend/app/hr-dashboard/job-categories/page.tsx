@@ -33,9 +33,10 @@ export default function JobCategoriesPage() {
 
   const checkAccess = async () => {
     try {
-      const profile = await authAPI.getProfile();
-      const isSuperuser = profile.data?.permissions?.is_superuser;
-      if (!isSuperuser) {
+      const profile = await authAPI.checkAuth();
+      const perms = profile.data?.permissions || {};
+      const canAccess = perms.is_hr_manager || perms.is_superuser;
+      if (!canAccess) {
         router.replace("/hr-dashboard");
         return;
       }
@@ -103,7 +104,7 @@ export default function JobCategoriesPage() {
           </div>
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Job Categories</h1>
-            <p className="text-gray-600 mt-1">Visible to administrators only</p>
+            <p className="text-gray-600 mt-1">Visible to HR Managers only</p>
           </div>
         </div>
       </div>
