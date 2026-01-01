@@ -1,16 +1,52 @@
 "use client";
 
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { applicantAPI, interviewAPI, api, publicAPI } from "@/lib/api";
+import { applicantAPI, interviewAPI, publicAPI } from "@/lib/api";
 import { useStore } from "@/store/useStore";
-import { UserPlus, Mail, Phone, User, Loader2, MapPin } from "lucide-react";
+import { Loader2, Mail, MapPin, Phone, User, UserPlus } from "lucide-react";
 import { getCurrentLocation, GeolocationData } from "@/lib/geolocation";
+import { motion, useReducedMotion } from "framer-motion";
+
+const PROGRESS_STEPS = [
+  { label: "Position", state: "complete" },
+  { label: "Register", state: "current" },
+  { label: "Interview", state: "upcoming" },
+] as const;
+
+function ProgressIndicator() {
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">
+      {PROGRESS_STEPS.map((step, index) => {
+        const isComplete = step.state === "complete";
+        const isCurrent = step.state === "current";
+        return (
+          <div key={step.label} className="flex items-center gap-3">
+            <div
+              className={`flex h-7 items-center gap-2 rounded-full px-3 ${
+                isComplete
+                  ? "bg-teal-300 text-slate-950"
+                  : isCurrent
+                  ? "border border-teal-300 text-teal-200"
+                  : "border border-white/20 text-slate-400"
+              }`}
+            >
+              <span className="h-2 w-2 rounded-full bg-current" />
+              <span>{step.label}</span>
+            </div>
+            {index < PROGRESS_STEPS.length - 1 && <span className="h-px w-6 bg-white/20" />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function RegisterPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setCurrentApplicant, setCurrentInterview } = useStore();
+  const shouldReduceMotion = useReducedMotion();
   const resumeStorageKey = "resumeInterview";
   const [positionCode, setPositionCode] = useState<string | null>(null);
   const [positionTypeId, setPositionTypeId] = useState<number | null>(null);
@@ -36,7 +72,6 @@ function RegisterPageContent() {
   const [locationError, setLocationError] = useState("");
   const [isGettingLocation, setIsGettingLocation] = useState(true);
 
-  // Resolve job position to position type on mount
   useEffect(() => {
     const jobPosition = searchParams.get("position");
     const officeParam = searchParams.get("office");
@@ -99,7 +134,6 @@ function RegisterPageContent() {
     }
   }, [positionCode]);
 
-  // Get geolocation on component mount
   useEffect(() => {
     const getLocation = async () => {
       try {
@@ -109,7 +143,6 @@ function RegisterPageContent() {
         setLocationError("");
       } catch (error: any) {
         console.warn("Geolocation error:", error.message);
-        // Fallback to IP-based geolocation
         try {
           const res = await fetch("https://ipapi.co/json/");
           const data = await res.json();
@@ -144,28 +177,24 @@ function RegisterPageContent() {
   const validateForm = () => {
     const newErrors: Record<string, string> = {};
 
-    // First name validation
     if (!formData.first_name.trim()) {
       newErrors.first_name = "First name is required";
     } else if (formData.first_name.trim().length < 2) {
       newErrors.first_name = "First name must be at least 2 characters";
     }
 
-    // Last name validation
     if (!formData.last_name.trim()) {
       newErrors.last_name = "Last name is required";
     } else if (formData.last_name.trim().length < 2) {
       newErrors.last_name = "Last name must be at least 2 characters";
     }
 
-    // Email validation
     if (!formData.email.trim()) {
       newErrors.email = "Email is required";
     } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(formData.email)) {
       newErrors.email = "Invalid email format";
     }
 
-    // Phone validation
     if (!formData.phone.trim()) {
       newErrors.phone = "Phone number is required";
     } else if (!/^\+?[\d\s\-()]{10,}$/.test(formData.phone)) {
@@ -179,7 +208,6 @@ function RegisterPageContent() {
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
-    // Clear error when user starts typing
     if (errors[name]) {
       setErrors((prev) => ({ ...prev, [name]: "" }));
     }
@@ -202,7 +230,6 @@ function RegisterPageContent() {
     setApiError("");
 
     try {
-      // Prepare data with location if available
       const registrationData = {
         ...formData,
         applicant_lat: location?.latitude ?? null,
@@ -213,11 +240,10 @@ function RegisterPageContent() {
         location_source: locationSource,
         position_type_id: positionTypeId,
         office_id: officeId,
-        };
+      };
 
       console.log("Sending registration data:", registrationData);
 
-      // Register applicant
       const applicantResponse = await applicantAPI.register(registrationData);
       const applicant = applicantResponse.data.applicant || applicantResponse.data;
       const token = applicantResponse.data.token;
@@ -239,7 +265,6 @@ function RegisterPageContent() {
         return;
       }
 
-      // Create interview and redirect directly
       try {
         if (!positionCode || !positionTypeId) {
           setApiError("Unable to resolve position. Please start from the positions page.");
@@ -340,23 +365,19 @@ function RegisterPageContent() {
           return;
         }
 
-        // Handle field-specific errors from backend
         if (typeof errorData === "object" && !errorData.message && !errorData.error) {
           const fieldErrors: Record<string, string> = {};
           Object.keys(errorData).forEach((key) => {
             if (key !== "detail") {
-              // Skip generic detail field
               const errorMsg = Array.isArray(errorData[key]) ? errorData[key][0] : errorData[key];
               fieldErrors[key] = errorMsg;
             }
           });
 
-          // If we have field errors, set them
           if (Object.keys(fieldErrors).length > 0) {
             setErrors(fieldErrors);
             setApiError("Please fix the errors below and try again.");
           } else {
-            // No field errors, show the detail or generic message
             setApiError(errorData.detail || JSON.stringify(errorData) || "Registration failed. Please try again.");
           }
           return;
@@ -373,134 +394,91 @@ function RegisterPageContent() {
           return;
         }
 
-        setApiError(
-          message || "We couldn't submit your application due to a system issue. Please try again later."
-        );
-        setIsSubmitting(false);
-        return;
-      } else {
-        setApiError("Unable to connect to server. Please check your connection and try again.");
+        setApiError(message || "We couldn't submit your application due to a system issue. Please try again later.");
         setIsSubmitting(false);
         return;
       }
+      setApiError("Unable to connect to server. Please check your connection and try again.");
+      setIsSubmitting(false);
+      return;
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const containerMotion = useMemo(
+    () => ({
+      initial: shouldReduceMotion ? false : { opacity: 0, y: 12 },
+      animate: { opacity: 1, y: 0 },
+      transition: { duration: 0.3 },
+    }),
+    [shouldReduceMotion]
+  );
+
   return (
-    <div className="min-h-screen flex items-center justify-center px-4 py-12">
-      <div className="max-w-md w-full">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 bg-blue-100 rounded-full mb-4">
-            <UserPlus className="w-8 h-8 text-blue-600" />
-          </div>
-          <h1 className="text-3xl font-bold mb-2">Create Your Account</h1>
-          <p className="text-gray-600">Fill in your details to start your video interview</p>
-        </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="relative overflow-hidden">
+        <div className="absolute -top-28 right-[-10%] h-80 w-80 rounded-full bg-teal-500/20 blur-3xl" />
+        <div className="absolute bottom-0 left-[-10%] h-80 w-80 rounded-full bg-sky-500/15 blur-3xl" />
 
-        {/* Location Status */}
-        {isGettingLocation && (
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-center">
-              <Loader2 className="w-5 h-5 text-blue-600 animate-spin mr-3" />
-              <p className="text-blue-800 text-sm">Detecting your location...</p>
-            </div>
-          </div>
-        )}
-
-        {location && !isGettingLocation && (
-          <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
-            <div className="flex items-center">
-              <MapPin className="w-5 h-5 text-green-600 mr-3" />
-              <p className="text-green-800 text-sm">Location detected successfully</p>
-            </div>
-          </div>
-        )}
-
-        {locationError && !isGettingLocation && (
-          <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-            <div className="flex items-start">
-              <MapPin className="w-5 h-5 text-yellow-600 mr-3 mt-0.5" />
-              <div>
-                <p className="text-yellow-800 text-sm font-medium">Location not available</p>
-                <p className="text-yellow-700 text-xs mt-1">{locationError}</p>
-                <p className="text-yellow-700 text-xs mt-1">
-                  You can still register, but your application will be marked as online.
-                </p>
+        <motion.div {...containerMotion} className="relative mx-auto max-w-5xl px-6 py-16 sm:py-20">
+          <header className="space-y-6">
+            <ProgressIndicator />
+            <div className="space-y-3">
+              <div className="inline-flex h-12 w-12 items-center justify-center rounded-2xl bg-white/10">
+                <UserPlus className="h-6 w-6 text-teal-200" />
               </div>
-            </div>
-          </div>
-        )}
-
-        {/* API Error Alert */}
-        {apiError && (
-          <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-            <div className="flex items-start">
-              <div className="shrink-0">
-                <svg className="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                  <path
-                    fillRule="evenodd"
-                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-              </div>
-              <div className="ml-3 flex-1">
-                <p className="text-red-800 text-sm font-medium">{apiError}</p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {resumeDetected && resumeInterviewId && showResumeModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-            <div className="bg-white rounded-lg shadow-lg p-6 max-w-md w-full text-center">
-              <h2 className="text-xl font-bold mb-2">Resume Interview</h2>
-              <p className="text-gray-700 mb-4">
-                You have an interview in progress for this position.
+              <h1 className="text-3xl font-semibold sm:text-4xl">Applicant Registration</h1>
+              <p className="text-base text-slate-300">
+                Provide basic information to begin the initial interview.
               </p>
-              <button
-                type="button"
-                onClick={() => {
-                  clearResumeIntent();
-                  router.push(`/interview/${resumeInterviewId}`);
-                }}
-                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-              >
-                Continue Interview
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowResumeModal(false);
-                  setResumeDetected(false);
-                  setResumeInterviewId(null);
-                  router.push("/positions");
-                }}
-                className="mt-3 w-full px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 text-sm"
-              >
-                Not Now
-              </button>
             </div>
-          </div>
-        )}
+          </header>
 
-        {resumeDetected && resumeInterviewId && !showResumeModal && (
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-            <div className="flex items-start">
-              <div className="shrink-0">
-                <svg className="h-5 w-5 text-blue-500" viewBox="0 0 20 20" fill="currentColor">
-                  <path
-                    fillRule="evenodd"
-                    d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-9-1a1 1 0 011-1h2a1 1 0 110 2h-2a1 1 0 01-1-1zm1 4a1 1 0 100-2 1 1 0 000 2z"
-                    clipRule="evenodd"
-                  />
-                </svg>
+          {isGettingLocation && (
+            <div className="mt-8 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-200">
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-5 w-5 animate-spin text-teal-200" />
+                <p>Detecting your location...</p>
               </div>
-              <div className="ml-3 flex-1">
-                <p className="text-blue-900 text-sm font-medium">
+            </div>
+          )}
+
+          {location && !isGettingLocation && (
+            <div className="mt-8 rounded-2xl border border-teal-300/30 bg-teal-400/10 p-4 text-sm text-teal-100">
+              <div className="flex items-center gap-3">
+                <MapPin className="h-5 w-5 text-teal-200" />
+                <p>Location detected successfully</p>
+              </div>
+            </div>
+          )}
+
+          {locationError && !isGettingLocation && (
+            <div className="mt-8 rounded-2xl border border-amber-300/40 bg-amber-400/10 p-4 text-sm text-amber-100">
+              <div className="flex items-start gap-3">
+                <MapPin className="mt-0.5 h-5 w-5 text-amber-200" />
+                <div>
+                  <p className="font-semibold text-amber-100">Location not available</p>
+                  <p className="mt-1 text-xs text-amber-100/80">{locationError}</p>
+                  <p className="mt-1 text-xs text-amber-100/80">
+                    You can still register, but your application will be marked as online.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {apiError && (
+            <div className="mt-8 rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100">
+              <p className="font-semibold">{apiError}</p>
+            </div>
+          )}
+
+          {resumeDetected && resumeInterviewId && showResumeModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4">
+              <div className="w-full max-w-md rounded-2xl bg-white p-6 text-center text-slate-900 shadow-lg">
+                <h2 className="text-xl font-semibold">Resume Interview</h2>
+                <p className="mt-2 text-sm text-slate-600">
                   You have an interview in progress for this position.
                 </p>
                 <button
@@ -509,157 +487,205 @@ function RegisterPageContent() {
                     clearResumeIntent();
                     router.push(`/interview/${resumeInterviewId}`);
                   }}
-                  className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                  className="mt-4 w-full rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-900"
                 >
                   Continue Interview
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowResumeModal(false);
+                    setResumeDetected(false);
+                    setResumeInterviewId(null);
+                    router.push("/positions");
+                  }}
+                  className="mt-3 w-full rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:border-slate-300"
+                >
+                  Not Now
+                </button>
               </div>
             </div>
-          </div>
-        )}
-
-        {/* Registration Form */}
-        <form onSubmit={handleSubmit} className="bg-white shadow-lg rounded-lg p-8 space-y-6">
-          {resumeDetected && (
-            <div className="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg px-4 py-3">
-              <span className="text-sm font-semibold text-blue-900">Interview in progress</span>
-              <span className="text-xs text-blue-700">
-                You already have an interview in progress for this position.
-              </span>
-            </div>
           )}
-          {/* First Name */}
-          <div>
-            <label htmlFor="first_name" className="block text-sm font-medium text-gray-700 mb-2">
-              <User className="w-4 h-4 inline mr-2" />
-              First Name
-            </label>
-            <input
-              type="text"
-              id="first_name"
-              name="first_name"
-              value={formData.first_name}
-              onChange={handleChange}
-              className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${errors.first_name ? "border-red-500" : "border-gray-300"
-                }`}
-              placeholder="John"
-              disabled={isSubmitting}
-            />
-            {errors.first_name && <p className="mt-1 text-sm text-red-600">{errors.first_name}</p>}
-          </div>
 
-          {/* Last Name */}
-          <div>
-            <label htmlFor="last_name" className="block text-sm font-medium text-gray-700 mb-2">
-              <User className="w-4 h-4 inline mr-2" />
-              Last Name
-            </label>
-            <input
-              type="text"
-              id="last_name"
-              name="last_name"
-              value={formData.last_name}
-              onChange={handleChange}
-              className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${errors.last_name ? "border-red-500" : "border-gray-300"
-                }`}
-              placeholder="Doe"
-              disabled={isSubmitting}
-            />
-            {errors.last_name && <p className="mt-1 text-sm text-red-600">{errors.last_name}</p>}
-          </div>
-
-          {/* Email */}
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-              <Mail className="w-4 h-4 inline mr-2" />
-              Email Address
-            </label>
-            <input
-              type="email"
-              id="email"
-              name="email"
-              value={formData.email}
-              onChange={handleChange}
-              className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${errors.email ? "border-red-500" : "border-gray-300"
-                }`}
-              placeholder="john.doe@example.com"
-              disabled={isSubmitting}
-            />
-            {errors.email && <p className="mt-1 text-sm text-red-600">{errors.email}</p>}
-            {!errors.email && (
-              <p className="mt-1 text-xs text-gray-500">
-                Make sure this email is unique. Each applicant needs a different email address.
-              </p>
-            )}
-          </div>
-
-          {/* Phone */}
-          <div>
-            <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-              <Phone className="w-4 h-4 inline mr-2" />
-              Phone Number
-            </label>
-            <input
-              type="tel"
-              id="phone"
-              name="phone"
-              value={formData.phone}
-              onChange={handleChange}
-              className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition ${errors.phone ? "border-red-500" : "border-gray-300"
-                }`}
-              placeholder="+1 234 567 8900"
-              disabled={isSubmitting}
-            />
-            {errors.phone && <p className="mt-1 text-sm text-red-600">{errors.phone}</p>}
-            {!errors.phone && (
-              <p className="mt-1 text-xs text-gray-500">
-                Include country code and at least 10 digits (e.g., +1234567890)
-              </p>
-            )}
-          </div>
-
-          {/* Position Display */}
-          {jobPositionName && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Position
-              </label>
-              <input
-                type="text"
-                value={jobPositionName}
-                readOnly
-                className="w-full px-4 py-2 border rounded-lg bg-gray-50 border-gray-300 text-gray-700"
-              />
+          {resumeDetected && resumeInterviewId && !showResumeModal && (
+            <div className="mt-8 rounded-2xl border border-teal-300/30 bg-teal-400/10 p-4 text-sm text-teal-100">
+              <p className="font-semibold">You have an interview in progress for this position.</p>
+              <button
+                type="button"
+                onClick={() => {
+                  clearResumeIntent();
+                  router.push(`/interview/${resumeInterviewId}`);
+                }}
+                className="mt-3 rounded-full bg-teal-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-teal-300"
+              >
+                Continue Interview
+              </button>
             </div>
           )}
 
-          {/* Submit Button */}
-          <button
-            type="submit"
-            disabled={isSubmitting || pendingApplicationDetected || resumeDetected}
-            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed flex items-center justify-center"
+          <form
+            onSubmit={handleSubmit}
+            className="mt-10 rounded-3xl border border-white/10 bg-white p-8 text-slate-900 shadow-xl sm:p-10"
           >
-            {isSubmitting ? (
-              <>
-                <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                Creating Account...
-              </>
-            ) : (
-              "Start Interview"
+            {resumeDetected && (
+              <div className="mb-6 rounded-2xl border border-teal-200 bg-teal-50 px-4 py-3 text-sm text-teal-900">
+                <p className="font-semibold">Interview in progress</p>
+                <p className="text-xs text-teal-700">
+                  You already have an interview in progress for this position.
+                </p>
+              </div>
             )}
-          </button>
-        </form>
 
-        {/* Back to Home */}
-        <div className="text-center mt-6">
-          <button
-            onClick={() => router.push("/")}
-            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
-            disabled={isSubmitting}
-          >
-            ← Back to Home
-          </button>
-        </div>
+            <div className="space-y-8">
+              <div>
+                <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-500">
+                  Personal information
+                </h2>
+                <div className="mt-4 grid gap-5 sm:grid-cols-2">
+                  <div>
+                    <label htmlFor="first_name" className="block text-sm font-medium text-slate-700 mb-2">
+                      <User className="mr-2 inline h-4 w-4 text-slate-400" />
+                      First Name
+                    </label>
+                    <input
+                      type="text"
+                      id="first_name"
+                      name="first_name"
+                      value={formData.first_name}
+                      onChange={handleChange}
+                      className={`w-full rounded-xl border px-4 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-300/60 ${
+                        errors.first_name ? "border-rose-400" : "border-slate-200"
+                      }`}
+                      placeholder="John"
+                      disabled={isSubmitting}
+                    />
+                    {errors.first_name && <p className="mt-1 text-xs text-rose-500">{errors.first_name}</p>}
+                  </div>
+
+                  <div>
+                    <label htmlFor="last_name" className="block text-sm font-medium text-slate-700 mb-2">
+                      <User className="mr-2 inline h-4 w-4 text-slate-400" />
+                      Last Name
+                    </label>
+                    <input
+                      type="text"
+                      id="last_name"
+                      name="last_name"
+                      value={formData.last_name}
+                      onChange={handleChange}
+                      className={`w-full rounded-xl border px-4 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-300/60 ${
+                        errors.last_name ? "border-rose-400" : "border-slate-200"
+                      }`}
+                      placeholder="Doe"
+                      disabled={isSubmitting}
+                    />
+                    {errors.last_name && <p className="mt-1 text-xs text-rose-500">{errors.last_name}</p>}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-500">
+                  Contact information
+                </h2>
+                <div className="mt-4 grid gap-5">
+                  <div>
+                    <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-2">
+                      <Mail className="mr-2 inline h-4 w-4 text-slate-400" />
+                      Email Address
+                    </label>
+                    <input
+                      type="email"
+                      id="email"
+                      name="email"
+                      value={formData.email}
+                      onChange={handleChange}
+                      className={`w-full rounded-xl border px-4 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-300/60 ${
+                        errors.email ? "border-rose-400" : "border-slate-200"
+                      }`}
+                      placeholder="john.doe@example.com"
+                      disabled={isSubmitting}
+                    />
+                    {errors.email && <p className="mt-1 text-xs text-rose-500">{errors.email}</p>}
+                    {!errors.email && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Use a unique email address for each applicant.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label htmlFor="phone" className="block text-sm font-medium text-slate-700 mb-2">
+                      <Phone className="mr-2 inline h-4 w-4 text-slate-400" />
+                      Phone Number
+                    </label>
+                    <input
+                      type="tel"
+                      id="phone"
+                      name="phone"
+                      value={formData.phone}
+                      onChange={handleChange}
+                      className={`w-full rounded-xl border px-4 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-teal-300/60 ${
+                        errors.phone ? "border-rose-400" : "border-slate-200"
+                      }`}
+                      placeholder="+1 234 567 8900"
+                      disabled={isSubmitting}
+                    />
+                    {errors.phone && <p className="mt-1 text-xs text-rose-500">{errors.phone}</p>}
+                    {!errors.phone && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        Include country code and at least 10 digits.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {jobPositionName && (
+                <div>
+                  <h2 className="text-sm font-semibold uppercase tracking-[0.3em] text-slate-500">
+                    Position
+                  </h2>
+                  <input
+                    type="text"
+                    value={jobPositionName}
+                    readOnly
+                    className="mt-3 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm text-slate-700"
+                  />
+                </div>
+              )}
+
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                No resume or documents required at this stage.
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSubmitting || pendingApplicationDetected || resumeDetected}
+                className="w-full rounded-full bg-slate-950 py-3 text-sm font-semibold text-white transition hover:bg-slate-900 disabled:bg-slate-400 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? (
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Preparing interview...
+                  </span>
+                ) : (
+                  "Proceed to Interview"
+                )}
+              </button>
+            </div>
+          </form>
+
+          <div className="mt-6 text-center">
+            <button
+              onClick={() => router.push("/")}
+              className="text-sm font-semibold text-teal-200 hover:text-teal-100"
+              disabled={isSubmitting}
+            >
+              Back to Home
+            </button>
+          </div>
+        </motion.div>
       </div>
     </div>
   );
@@ -672,7 +698,3 @@ export default function RegisterPage() {
     </Suspense>
   );
 }
-
-
-
-

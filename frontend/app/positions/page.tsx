@@ -1,10 +1,20 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import { Briefcase, MapPin, ArrowRight } from "lucide-react";
-import { AnimatePresence, motion } from "framer-motion";
+import {
+  ArrowRight,
+  Briefcase,
+  ClipboardList,
+  Headset,
+  MapPin,
+  Megaphone,
+  MessageSquare,
+} from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
+import type { LucideProps } from "lucide-react";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -24,28 +34,28 @@ interface JobPosition {
   }[];
 }
 
-// Icon mapping based on position code
-const getPositionIcon = (code: string): string => {
-  const iconMap: { [key: string]: string } = {
-    "virtual-assistant": "💼",
-    VA: "💼",
-    "customer-service": "🎧",
-    CS: "🎧",
-    "data-entry": "🧾",
-    DE: "🧾",
-    "social-media": "📱",
-    IT: "🧩",
-  };
-  return iconMap[code] || "💼";
+const iconMap: Record<string, React.ComponentType<LucideProps>> = {
+  "virtual-assistant": Headset,
+  VA: Headset,
+  "customer-service": MessageSquare,
+  CS: MessageSquare,
+  "data-entry": ClipboardList,
+  DE: ClipboardList,
+  "social-media": Megaphone,
+  IT: Briefcase,
+};
+
+const getPositionIcon = (code: string) => {
+  const Icon = iconMap[code] || Briefcase;
+  return <Icon className="h-6 w-6 text-teal-500" />;
 };
 
 export default function OpenPositionsPage() {
   const router = useRouter();
+  const shouldReduceMotion = useReducedMotion();
   const resumeStorageKey = "resumeInterview";
   const [positions, setPositions] = useState<JobPosition[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedJob, setSelectedJob] = useState<JobPosition | null>(null);
-  const [isDesktop, setIsDesktop] = useState(false);
   const [keyword, setKeyword] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("");
@@ -69,19 +79,6 @@ export default function OpenPositionsPage() {
     }
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const mediaQuery = window.matchMedia("(min-width: 768px)");
-    const handleChange = () => setIsDesktop(mediaQuery.matches);
-    handleChange();
-    if (mediaQuery.addEventListener) {
-      mediaQuery.addEventListener("change", handleChange);
-      return () => mediaQuery.removeEventListener("change", handleChange);
-    }
-    mediaQuery.addListener(handleChange);
-    return () => mediaQuery.removeListener(handleChange);
-  }, []);
-
   const filteredPositions = useMemo(() => {
     const keywordValue = keyword.trim().toLowerCase();
     const locationValue = locationFilter.trim().toLowerCase();
@@ -100,9 +97,7 @@ export default function OpenPositionsPage() {
             return false;
           }
         } else {
-          const matchesOffice = offices.some((office) =>
-            office.name.toLowerCase().includes(locationValue),
-          );
+          const matchesOffice = offices.some((office) => office.name.toLowerCase().includes(locationValue));
           if (!matchesOffice) {
             return false;
           }
@@ -112,28 +107,14 @@ export default function OpenPositionsPage() {
     });
   }, [positions, keyword, categoryFilter, locationFilter]);
 
-  useEffect(() => {
-    if (!isDesktop) {
-      setSelectedJob(null);
-      return;
-    }
-    if (filteredPositions.length === 0) {
-      setSelectedJob(null);
-      return;
-    }
-    if (selectedJob && !filteredPositions.some((pos) => pos.id === selectedJob.id)) {
-      setSelectedJob(null);
-    }
-  }, [isDesktop, filteredPositions, selectedJob]);
-
   const fetchPositions = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/positions/`);
       const data = response.data.results || response.data;
       setPositions(data);
-      setLoading(false);
     } catch (error) {
       console.error("Error fetching positions:", error);
+    } finally {
       setLoading(false);
     }
   };
@@ -149,11 +130,31 @@ export default function OpenPositionsPage() {
     }
   };
 
+  const containerMotion = {
+    initial: shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 12 },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: 0.3 },
+  };
+
+  const listVariants = shouldReduceMotion
+    ? undefined
+    : {
+        hidden: {},
+        show: { transition: { staggerChildren: 0.05 } },
+      };
+
+  const cardVariants = shouldReduceMotion
+    ? undefined
+    : {
+        hidden: { opacity: 0, y: 12 },
+        show: { opacity: 1, y: 0 },
+      };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-fuchsia-400 mx-auto"></div>
+          <div className="h-12 w-12 animate-spin rounded-full border-b-2 border-teal-300 mx-auto" />
           <p className="mt-4 text-slate-200">Loading positions...</p>
         </div>
       </div>
@@ -161,90 +162,62 @@ export default function OpenPositionsPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 text-gray-900">
-      {/* Header */}
-      <header className="bg-white border-b border-gray-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center space-x-3">
-              <div className="bg-purple-600 p-2 rounded-lg shadow-lg shadow-purple-300/40">
-                <svg className="h-8 w-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"
-                  />
-                </svg>
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900">HireNow Pro</h1>
-                <p className="text-sm text-gray-500">Open Positions</p>
-              </div>
-            </div>
-            <div className="flex space-x-3">
-              <button
-                onClick={() => router.push("/")}
-                className="px-4 py-2 text-purple-600 hover:text-purple-700 font-medium transition"
-              >
-                Home
-              </button>
-            </div>
+    <div className="min-h-screen bg-slate-950 text-slate-100">
+      <header className="border-b border-white/10 bg-slate-950/80 backdrop-blur">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5 sm:px-10 lg:px-16">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-teal-200/80">HireNowPro</p>
+            <h1 className="mt-2 text-2xl font-semibold">Open Positions</h1>
+            <p className="mt-1 text-sm text-slate-300">Select a role to begin your initial interview.</p>
           </div>
+          <Link
+            href="/"
+            className="rounded-full border border-white/20 px-4 py-2 text-sm font-semibold text-white transition hover:border-white/50"
+          >
+            Back to Home
+          </Link>
         </div>
       </header>
 
-      {/* Hero Section */}
-      <div className="bg-gradient-to-br from-indigo-700 via-purple-600 to-fuchsia-600 text-white py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">Join Our Team</h1>
-          <p className="text-xl text-purple-100 max-w-3xl mx-auto">
-            We're hiring talented professionals. Apply now and start your journey with us!
-          </p>
-        </div>
-      </div>
+      <section className="relative overflow-hidden px-6 pb-14 pt-10 sm:px-10 lg:px-16">
+        <div className="absolute -top-32 right-[-10%] h-72 w-72 rounded-full bg-teal-400/20 blur-3xl" />
+        <div className="absolute bottom-0 left-[-10%] h-72 w-72 rounded-full bg-sky-400/15 blur-3xl" />
 
-      {/* Positions Grid */}
-      <div className="max-w-6xl mx-auto px-4 md:px-6 lg:px-8 py-10 space-y-8">
-        {resumeIntent && (
-          <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div>
-              <p className="text-sm font-semibold text-blue-900">You have an interview in progress.</p>
-              <p className="text-xs text-blue-700">Resume where you left off for this position.</p>
+        <motion.div {...containerMotion} className="mx-auto max-w-6xl space-y-8">
+          {resumeIntent && (
+            <div className="flex flex-col gap-3 rounded-2xl border border-teal-300/40 bg-white/5 p-4 text-sm text-slate-200 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="font-semibold text-teal-200">You have an interview in progress.</p>
+                <p className="text-slate-300">Resume where you left off for this position.</p>
+              </div>
+              <button
+                onClick={() => {
+                  sessionStorage.removeItem(resumeStorageKey);
+                  router.push(`/interview/${resumeIntent.interviewId}`);
+                }}
+                className="rounded-full bg-teal-400 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-teal-300"
+              >
+                Resume Interview
+              </button>
             </div>
-            <button
-              onClick={() => {
-                sessionStorage.removeItem(resumeStorageKey);
-                router.push(`/interview/${resumeIntent.interviewId}`);
-              }}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
-            >
-              Resume Interview
-            </button>
-          </div>
-        )}
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">Available Positions</h2>
-          <p className="text-gray-600">{filteredPositions.length} open positions • Select a job to see details</p>
-        </div>
+          )}
 
-        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-4 md:p-6">
-          <div className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr_1fr] gap-3">
+          <div className="grid gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 md:grid-cols-[1.4fr_1fr_1fr]">
             <div>
-              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">What</label>
+              <label className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-300">What</label>
               <input
                 value={keyword}
                 onChange={(event) => setKeyword(event.target.value)}
                 placeholder="Role, skills, keywords"
-                className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-400 transition"
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-400/40"
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Any classification</label>
+              <label className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-300">Category</label>
               <select
                 value={categoryFilter}
                 onChange={(event) => setCategoryFilter(event.target.value)}
-                className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-400 transition"
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2 text-sm text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-400/40"
               >
                 <option value="all">All categories</option>
                 {Array.from(
@@ -263,224 +236,108 @@ export default function OpenPositionsPage() {
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Where</label>
+              <label className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-300">Location</label>
               <input
                 value={locationFilter}
                 onChange={(event) => setLocationFilter(event.target.value)}
                 placeholder="City or Remote"
-                className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-purple-200 focus:border-purple-400 transition"
+                className="mt-2 w-full rounded-xl border border-white/10 bg-slate-950/60 px-4 py-2 text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-400/40"
               />
             </div>
           </div>
-        </div>
+        </motion.div>
+      </section>
 
-        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,0.45fr)_minmax(0,0.55fr)] gap-6 lg:gap-8">
-          <div className="space-y-4">
-            {filteredPositions.length === 0 ? (
-              <div className="text-center py-12">
-                <p className="text-gray-600">No positions available at the moment. Please check back later.</p>
-              </div>
-            ) : (
-              filteredPositions.map((position) => {
-                const isSelected = selectedJob?.id === position.id;
-                return (
-                  <motion.div
-                    key={position.id}
-                    onClick={() => {
-                      if (isDesktop) {
-                        setSelectedJob(position);
-                      }
-                    }}
-                    whileHover={{ y: -4 }}
-                    animate={{ scale: isSelected ? 1.01 : 1 }}
-                    transition={{ duration: 0.2, ease: "easeOut" }}
-                    className={`bg-white text-gray-900 rounded-xl border shadow-sm transition-all duration-200 overflow-hidden cursor-pointer ${
-                      isSelected
-                        ? "border-purple-400 ring-2 ring-purple-100 shadow-lg shadow-purple-200/40"
-                        : "border-gray-200 hover:shadow-lg hover:shadow-purple-100/60"
-                    }`}
-                  >
-                    <div className="p-6 space-y-4">
-                      <div className="flex items-start justify-between">
-                        <div className="flex items-center space-x-3">
-                          <div className="text-4xl">{getPositionIcon(position.code)}</div>
-                          <div>
-                            <h3 className="text-lg font-semibold text-gray-900">{position.name}</h3>
-                            {position.category_detail?.name && (
-                              <div className="mt-1">
-                                <span className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">
-                                  {position.category_detail.name}
-                                </span>
-                              </div>
-                            )}
-                            <div className="flex items-center space-x-3 mt-1 text-sm text-gray-600">
-                              <span className="inline-flex items-center px-2 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">
-                                <Briefcase className="w-3 h-3 mr-1" />
-                                Full-time
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      <p className="text-sm text-gray-600 leading-relaxed line-clamp-3">
-                        {position.description || "Join our team!"}
-                      </p>
-
-                      <div className="space-y-2">
-                        {position.offices_detail && position.offices_detail.length > 0 ? (
-                          <div>
-                            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Available Locations</p>
-                            <div className="flex flex-wrap gap-2 mt-1">
-                              {position.offices_detail.map((office) => (
-                                <span
-                                  key={office.id}
-                                  className="inline-flex items-center px-3 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded-full"
-                                >
-                                  <MapPin className="w-3 h-3 mr-1" />
-                                  {office.name}
-                                </span>
-                              ))}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="space-y-1">
-                            <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">Available Locations</p>
-                            <span className="inline-flex items-center px-3 py-1 text-xs font-medium bg-gray-100 text-gray-600 rounded-full">
-                              Remote Only
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </motion.div>
-                );
-              })
-            )}
+      <section className="bg-white px-6 py-14 text-slate-900 sm:px-10 lg:px-16">
+        <div className="mx-auto max-w-6xl">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-sm uppercase tracking-[0.3em] text-slate-500">Open Positions</p>
+              <h2 className="mt-3 text-3xl font-semibold">Choose a role to start</h2>
+              <p className="mt-2 text-slate-600">
+                {filteredPositions.length} open positions. Apply when you are ready.
+              </p>
+            </div>
+            <span className="text-xs uppercase tracking-[0.3em] text-teal-600">Initial Interview Only</span>
           </div>
 
-          {isDesktop && (
-            <div className="bg-white text-gray-900 rounded-2xl border border-gray-200 shadow-sm p-8 sticky top-24 h-fit">
-              <AnimatePresence mode="wait">
-                {selectedJob ? (
-                  <motion.div
-                    key={selectedJob.id}
-                    initial={{ x: 24, opacity: 0 }}
-                    animate={{ x: 0, opacity: 1 }}
-                    exit={{ x: 24, opacity: 0 }}
-                    transition={{ duration: 0.25, ease: "easeOut" }}
-                    className="space-y-6"
-                  >
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-center space-x-3">
-                        <div className="text-5xl">{getPositionIcon(selectedJob.code)}</div>
-                        <div>
-                          <p className="text-sm text-gray-500">HireNow Pro</p>
-                          <h3 className="text-2xl font-bold text-gray-900">{selectedJob.name}</h3>
-                          {selectedJob.category_detail?.name && (
-                            <span className="mt-2 inline-flex items-center px-3 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">
-                              {selectedJob.category_detail.name}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => setSelectedJob(null)}
-                        className="text-gray-400 hover:text-gray-600 text-sm"
-                      >
-                        Close
-                      </button>
-                    </div>
-
-                    <div>
-                      <p className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">About the role</p>
-                      <p className="text-gray-700 leading-relaxed">
-                        {selectedJob.description || "Join our team!"}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Location</p>
-                      <div className="flex flex-wrap gap-2">
-                        {selectedJob.offices_detail && selectedJob.offices_detail.length > 0 ? (
-                          selectedJob.offices_detail.map((office) => (
-                            <span
-                              key={office.id}
-                              className="inline-flex items-center px-3 py-1 text-xs font-medium bg-purple-100 text-purple-800 rounded-full"
-                            >
-                              <MapPin className="w-3 h-3 mr-1" />
-                              {office.name}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="inline-flex items-center px-3 py-1 text-xs font-medium bg-gray-100 text-gray-600 rounded-full">
-                            Remote Only
+          {filteredPositions.length === 0 ? (
+            <div className="mt-10 rounded-2xl border border-slate-200 bg-slate-50 p-10 text-center text-slate-600">
+              There are currently no open roles. Please check back later.
+            </div>
+          ) : (
+            <motion.div
+              variants={listVariants}
+              initial={shouldReduceMotion ? false : "hidden"}
+              animate="show"
+              className="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3"
+            >
+              {filteredPositions.map((position) => (
+                <motion.div
+                  key={position.id}
+                  variants={cardVariants}
+                  whileHover={shouldReduceMotion ? {} : { y: -6 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                  className="flex h-full flex-col justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-teal-300/60 hover:shadow-md"
+                >
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-teal-50">
+                        {getPositionIcon(position.code)}
+                      </span>
+                      <div>
+                        <h3 className="text-lg font-semibold text-slate-900">{position.name}</h3>
+                        {position.category_detail?.name && (
+                          <span className="mt-1 inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                            {position.category_detail.name}
                           </span>
                         )}
                       </div>
                     </div>
 
-                    <div>
-                      <p className="text-sm font-medium text-gray-500 uppercase tracking-wide mb-2">Benefits</p>
-                      <ul className="text-gray-700 space-y-2 text-sm">
-                        <li>Flexible work setup</li>
-                        <li>Fast hiring process</li>
-                        <li>Growth-focused culture</li>
-                      </ul>
+                    <p className="text-sm text-slate-600">
+                      {position.description || "Join our team and start your initial interview."}
+                    </p>
+
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Location</p>
+                      <div className="flex flex-wrap gap-2">
+                        {position.offices_detail && position.offices_detail.length > 0 ? (
+                          position.offices_detail.map((office) => (
+                            <span
+                              key={office.id}
+                              className="inline-flex items-center rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-700"
+                            >
+                              <MapPin className="mr-1 h-3 w-3" />
+                              {office.name}
+                            </span>
+                          ))
+                        ) : (
+                          <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                            Remote only
+                          </span>
+                        )}
+                      </div>
                     </div>
+                  </div>
 
-                    <button
-                      onClick={() => handleApply(selectedJob)}
-                      className="group relative w-full px-6 py-3 rounded-lg bg-gradient-to-r from-purple-500 via-fuchsia-500 to-pink-500 text-white font-medium shadow-lg shadow-purple-200/60 hover:shadow-purple-300/80 transition-all hover:-translate-y-0.5"
-                    >
-                      <span className="relative z-10 inline-flex items-center justify-center space-x-2">
-                        <span>Apply Now</span>
-                        <ArrowRight className="w-4 h-4" />
-                      </span>
-                      <span className="absolute inset-0 bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"></span>
-                    </button>
-                  </motion.div>
-                ) : (
-                  <motion.div
-                    key="placeholder"
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.2 }}
-                    className="text-center text-gray-500 py-16"
+                  <button
+                    onClick={() => handleApply(position)}
+                    className="mt-6 inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-900"
                   >
-                    <p className="text-sm">Select a job to see the full details.</p>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-            </div>
+                    Apply / Start Interview
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </motion.div>
+              ))}
+            </motion.div>
           )}
-        </div>
-      </div>
 
-      {/* Benefits Section */}
-      <div className="bg-gray-50 border-t border-gray-200 py-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <h2 className="text-2xl font-bold text-gray-900 text-center mb-8">Why Work With Us?</h2>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="text-center p-6 bg-white rounded-2xl border border-gray-200 shadow-sm">
-              <div className="text-4xl mb-3">🌿</div>
-              <h3 className="font-bold text-gray-900 mb-2">Flexible</h3>
-              <p className="text-gray-600">Work where you thrive</p>
-            </div>
-            <div className="text-center p-6 bg-white rounded-2xl border border-gray-200 shadow-sm">
-              <div className="text-4xl mb-3">⚡</div>
-              <h3 className="font-bold text-gray-900 mb-2">Fast Hiring</h3>
-              <p className="text-gray-600">Quick AI-powered interview process</p>
-            </div>
-            <div className="text-center p-6 bg-white rounded-2xl border border-gray-200 shadow-sm">
-              <div className="text-4xl mb-3">💸</div>
-              <h3 className="font-bold text-gray-900 mb-2">Competitive Pay</h3>
-              <p className="text-gray-600">Fair compensation for your skills</p>
-            </div>
+          <div className="mt-10 rounded-2xl border border-slate-200 bg-slate-50 px-6 py-4 text-sm text-slate-600">
+            Initial interview only. No documents required at this stage.
           </div>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
