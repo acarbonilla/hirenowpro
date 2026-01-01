@@ -74,6 +74,22 @@ export default function InterviewPage() {
   const [showInitialCountdown, setShowInitialCountdown] = useState(true);
   const [initialCountdown, setInitialCountdown] = useState(5);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [silenceStage, setSilenceStage] = useState(0);
+  const [silenceDuration, setSilenceDuration] = useState(0);
+
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const audioDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const silenceRafRef = useRef<number | null>(null);
+  const silenceStartRef = useRef<number | null>(null);
+  const silenceStageRef = useRef(0);
+  const currentQuestionIdRef = useRef<number | null>(null);
+  const silenceStatsRef = useRef<Record<number, { silence_duration: number; prompt_stage: number }>>({});
+  const skipUploadRef = useRef(false);
+  const noResponseTriggeredRef = useRef(false);
+  const isRecordingRef = useRef(false);
+  const stopRecordingRef = useRef<() => void>(() => {});
 
   const handleDataAvailable = useCallback(({ data }: BlobEvent) => {
     if (data.size > 0) {
@@ -280,6 +296,140 @@ export default function InterviewPage() {
     setTimeout(() => setPermissionLoading(false), 300);
   };
 
+  const SILENCE_THRESHOLD = 0.02;
+  const SILENCE_STAGE_MS = {
+    gentle: 5000,
+    supportive: 8000,
+    options: 12000,
+    autoStop: 20000,
+  };
+
+  const stopSilenceDetection = useCallback(() => {
+    if (silenceRafRef.current !== null) {
+      cancelAnimationFrame(silenceRafRef.current);
+      silenceRafRef.current = null;
+    }
+    if (audioSourceRef.current) {
+      try {
+        audioSourceRef.current.disconnect();
+      } catch {
+        // Ignore cleanup errors.
+      }
+      audioSourceRef.current = null;
+    }
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+    audioDataRef.current = null;
+    silenceStartRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    return () => stopSilenceDetection();
+  }, [stopSilenceDetection]);
+
+  const startSilenceDetection = useCallback((stream: MediaStream) => {
+    if (audioContextRef.current || !stream.getAudioTracks().length) {
+      return;
+    }
+
+    try {
+      const AudioContextCtor =
+        window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextCtor) return;
+
+      const audioContext = new AudioContextCtor();
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(analyser);
+
+      const dataArray: Uint8Array<ArrayBuffer> = new Uint8Array(analyser.fftSize);
+
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+      audioSourceRef.current = source;
+      audioDataRef.current = dataArray;
+      silenceStartRef.current = null;
+      silenceStageRef.current = 0;
+      noResponseTriggeredRef.current = false;
+      setSilenceStage(0);
+      setSilenceDuration(0);
+
+      const tick = () => {
+        if (!isRecordingRef.current || !analyserRef.current || !audioDataRef.current) {
+          return;
+        }
+
+        analyserRef.current.getByteTimeDomainData(audioDataRef.current);
+        let sum = 0;
+        for (let i = 0; i < audioDataRef.current.length; i += 1) {
+          const normalized = (audioDataRef.current[i] - 128) / 128;
+          sum += normalized * normalized;
+        }
+        const rms = Math.sqrt(sum / audioDataRef.current.length);
+        const now = performance.now();
+
+        if (rms < SILENCE_THRESHOLD) {
+          if (silenceStartRef.current === null) {
+            silenceStartRef.current = now;
+          }
+          const silentMs = now - silenceStartRef.current;
+          const silentSeconds = Math.floor(silentMs / 1000);
+
+          let stage = 0;
+          if (silentMs >= SILENCE_STAGE_MS.autoStop) {
+            stage = 4;
+          } else if (silentMs >= SILENCE_STAGE_MS.options) {
+            stage = 3;
+          } else if (silentMs >= SILENCE_STAGE_MS.supportive) {
+            stage = 2;
+          } else if (silentMs >= SILENCE_STAGE_MS.gentle) {
+            stage = 1;
+          }
+
+          if (stage !== silenceStageRef.current) {
+            silenceStageRef.current = stage;
+            setSilenceStage(stage);
+          }
+          setSilenceDuration(silentSeconds);
+
+          const questionId = currentQuestionIdRef.current;
+          if (questionId) {
+            silenceStatsRef.current[questionId] = {
+              silence_duration: silentSeconds,
+              prompt_stage: stage,
+            };
+          }
+
+          if (stage === 4 && !noResponseTriggeredRef.current) {
+            noResponseTriggeredRef.current = true;
+            setSuccessMessage("No response recorded for this question. Continuing.");
+            setTimeout(() => stopRecordingRef.current(), 0);
+          }
+        } else {
+          silenceStartRef.current = null;
+          if (silenceStageRef.current !== 0) {
+            silenceStageRef.current = 0;
+            setSilenceStage(0);
+          }
+          if (silenceDuration !== 0) {
+            setSilenceDuration(0);
+          }
+        }
+
+        silenceRafRef.current = requestAnimationFrame(tick);
+      };
+
+      silenceRafRef.current = requestAnimationFrame(tick);
+    } catch (err) {
+      console.warn("Silence detection unavailable", err);
+    }
+  }, [silenceDuration, stopSilenceDetection]);
+
   const startRecording = useCallback(() => {
     if (!webcamRef.current?.stream) {
       setError("Camera not ready. Please allow camera access.");
@@ -343,9 +493,10 @@ export default function InterviewPage() {
     mediaRecorderRef.current = mediaRecorder;
     mediaRecorder.start();
     setIsRecording(true);
+    startSilenceDetection(webcamRef.current.stream);
 
     console.log("MediaRecorder started with state:", mediaRecorder.state);
-  }, [handleDataAvailable]);
+  }, [handleDataAvailable, startSilenceDetection]);
 
   // Initial countdown before first question
   const startInitialCountdown = useCallback(() => {
@@ -425,6 +576,20 @@ export default function InterviewPage() {
     }
   }, [currentQuestionIndex, showInitialCountdown, questions]);
 
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording, stopSilenceDetection]);
+
+  useEffect(() => {
+    const currentQuestion = questions[currentQuestionIndex];
+    currentQuestionIdRef.current = currentQuestion ? currentQuestion.id : null;
+    silenceStartRef.current = null;
+    silenceStageRef.current = 0;
+    noResponseTriggeredRef.current = false;
+    setSilenceStage(0);
+    setSilenceDuration(0);
+  }, [currentQuestionIndex, questions]);
+
   // Recording timer
   useEffect(() => {
     let interval: NodeJS.Timeout;
@@ -442,17 +607,59 @@ export default function InterviewPage() {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
-  }, [isRecording]);
+    stopSilenceDetection();
+  }, [isRecording, stopSilenceDetection]);
+
+  useEffect(() => {
+    stopRecordingRef.current = stopRecording;
+  }, [stopRecording]);
+
+  const handleSilenceStartAnswer = () => {
+    silenceStartRef.current = performance.now();
+    silenceStageRef.current = 0;
+    setSilenceStage(0);
+    setSilenceDuration(0);
+  };
+
+  const handleSilenceRepeatQuestion = () => {
+    setSuccessMessage("The question is displayed above. Take your time.");
+  };
+
+  const handleSilenceSkip = () => {
+    if (!isRecordingRef.current) return;
+    skipUploadRef.current = true;
+    setSuccessMessage("Skipping this question for now.");
+    stopRecordingRef.current();
+  };
 
   // Auto-upload when recording stops and chunks are ready
   useEffect(() => {
     if (!isRecording && recordedChunks.length > 0 && !isUploading) {
+      if (skipUploadRef.current) {
+        skipUploadRef.current = false;
+        setRecordedChunks([]);
+        setSuccessMessage("Question skipped. You can answer it later.");
+        if (currentQuestionIndex < questions.length - 1) {
+          nextQuestion();
+        }
+        return;
+      }
       const timer = setTimeout(() => {
         handleUploadVideo();
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [isRecording, recordedChunks.length]);
+  }, [isRecording, recordedChunks.length, isUploading, currentQuestionIndex, questions.length, nextQuestion]);
+
+  useEffect(() => {
+    if (!isRecording && recordedChunks.length === 0 && skipUploadRef.current && !isUploading) {
+      skipUploadRef.current = false;
+      setSuccessMessage("Question skipped. You can answer it later.");
+      if (currentQuestionIndex < questions.length - 1) {
+        nextQuestion();
+      }
+    }
+  }, [isRecording, recordedChunks.length, isUploading, currentQuestionIndex, questions.length, nextQuestion]);
 
   const handleUploadVideo = async () => {
     if (recordedChunks.length === 0) {
@@ -1086,6 +1293,46 @@ export default function InterviewPage() {
                   {isSpeaking ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
                 </button>
               </div>
+
+              {isRecording && !isSpeaking && silenceStage > 0 && (
+                <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+                  {silenceStage === 1 && <p>You may begin when you are ready.</p>}
+                  {silenceStage === 2 && (
+                    <p>You can answer briefly. A step-by-step outline is enough.</p>
+                  )}
+                  {silenceStage === 3 && (
+                    <>
+                      <p>If you need a moment, choose an option below.</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={handleSilenceStartAnswer}
+                          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Start Answer
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSilenceRepeatQuestion}
+                          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Repeat Question
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSilenceSkip}
+                          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                        >
+                          Skip (answer later)
+                        </button>
+                      </div>
+                    </>
+                  )}
+                  {silenceStage >= 4 && (
+                    <p>No response recorded. We will continue to the next question.</p>
+                  )}
+                </div>
+              )}
 
               {/* Tips */}
               <div className="bg-linear-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg p-4">

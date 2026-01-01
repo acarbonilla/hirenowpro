@@ -20,6 +20,8 @@ interface VideoResponse {
   ai_score: number;
   ai_analysis_summary: string;
   sentiment: number | string;
+  script_reading_status?: string | null;
+  script_reading_data?: Record<string, any> | null;
   hr_override_score?: number;
   hr_comments?: string;
   hr_reviewed_at?: string;
@@ -83,6 +85,7 @@ export default function ApplicantDetailHistoryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedVideo, setSelectedVideo] = useState<VideoResponse | null>(null);
+  const [scriptDetailsOpen, setScriptDetailsOpen] = useState<Record<number, boolean>>({});
   const [activeTab, setActiveTab] = useState<"overview" | "videos" | "processing">("overview");
 
   useEffect(() => {
@@ -97,15 +100,58 @@ export default function ApplicantDetailHistoryPage() {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       const response = await axios.get(`${API_BASE_URL}/applicants/${applicantId}/full-history/`, { headers });
-      setApplicant(response.data);
+      const data = response.data;
+      setApplicant(data);
 
-      if (response.data.video_responses && response.data.video_responses.length > 0) {
-        setSelectedVideo(response.data.video_responses[0]);
+      const initialSelectedId = data.video_responses?.[0]?.id;
+      if (initialSelectedId) {
+        setSelectedVideo(data.video_responses[0]);
+      }
+      if (data.interview?.id) {
+        enrichScriptSignals(data.interview.id, initialSelectedId);
       }
     } catch (err: any) {
       setError(err.response?.data?.detail || "Failed to load applicant details");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const enrichScriptSignals = async (interviewId: number, selectedId?: number) => {
+    try {
+      const token = getHRToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const response = await axios.get(`${API_BASE_URL}/hr/interviews/${interviewId}/`, { headers });
+      const responses = response.data?.video_responses || [];
+      const scriptById = new Map(
+        responses.map((video: any) => [
+          video.id,
+          {
+            script_reading_status: video.script_reading_status ?? null,
+            script_reading_data: video.script_reading_data ?? null,
+          },
+        ])
+      );
+
+      setApplicant((prev) => {
+        if (!prev) return prev;
+        const mergedVideos = (prev.video_responses || []).map((video) => ({
+          ...video,
+          ...(scriptById.get(video.id) || {}),
+        }));
+
+        const selectedIdToUse = selectedVideo?.id ?? selectedId;
+        if (selectedIdToUse) {
+          const nextSelected = mergedVideos.find((video) => video.id === selectedIdToUse) || null;
+          if (nextSelected) {
+            setSelectedVideo(nextSelected);
+          }
+        }
+
+        return { ...prev, video_responses: mergedVideos };
+      });
+    } catch (err) {
+      // Optional enrichment; ignore failures.
     }
   };
 
@@ -120,8 +166,10 @@ export default function ApplicantDetailHistoryPage() {
     };
     return (
       <span
-        className={`px-3 py-1 text-sm font-semibold rounded-full ${statusColors[status] || "bg-gray-100 text-gray-800"
-          }`}
+        className={[
+          "px-3 py-1 text-sm font-semibold rounded-full",
+          statusColors[status] || "bg-gray-100 text-gray-800",
+        ].join(" ")}
       >
         {status.replace("_", " ").toUpperCase()}
       </span>
@@ -133,6 +181,64 @@ export default function ApplicantDetailHistoryPage() {
     if (score >= 50) return "text-yellow-600";
     return "text-red-600";
   };
+
+  const normalizeScriptStatus = (status?: string | null) => {
+    const value = (status || "").toLowerCase();
+    if (value === "clear" || value === "clean") return "clear";
+    if (value === "suspicious") return "suspicious";
+    if (value === "high_risk" || value === "high-risk") return "high_risk";
+    if (value === "error") return "error";
+    return "unknown";
+  };
+
+  const getScriptStatusLabel = (status?: string | null) => {
+    const normalized = normalizeScriptStatus(status);
+    if (normalized == "clear") return "No script indicators";
+    if (normalized == "suspicious") return "Possible script use";
+    if (normalized == "high_risk") return "Possible script use";
+    if (normalized == "error") return "Unable to assess";
+    return "Not assessed";
+  };
+
+  const getScriptStatusClass = (status?: string | null) => {
+    const normalized = normalizeScriptStatus(status);
+    if (normalized == "clear") return "bg-green-100 text-green-800";
+    if (normalized == "suspicious") return "bg-yellow-100 text-yellow-800";
+    if (normalized == "high_risk") return "bg-red-100 text-red-800";
+    if (normalized == "error") return "bg-gray-100 text-gray-700";
+    return "bg-gray-100 text-gray-700";
+  };
+
+  const getScriptSummary = (status?: string | null) => {
+    const normalized = normalizeScriptStatus(status);
+    if (normalized == "clear") return "No indicators";
+    if (normalized == "suspicious") return "Review suggested";
+    if (normalized == "high_risk") return "Review suggested";
+    if (normalized == "error") return "Not available (insufficient visual signal)";
+    return "Not assessed";
+  };
+
+  const formatMetric = (value: unknown, suffix = "") => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const rounded = Number.isInteger(value) ? value : round(value, 1);
+      return `${rounded}${suffix}`;
+    }
+    if (typeof value === "string" && value.trim()) {
+      return `${value}${suffix}`;
+    }
+    return "N/A";
+  };
+
+  const round = (value: number, precision = 1) => {
+    const factor = 10 ** precision;
+    return Math.round(value * factor) / factor;
+  };
+
+  const hasNoFaceFlag = (data?: Record<string, any> | null) => {
+    if (!data || !Array.isArray(data.flags)) return false;
+    return data.flags.some((flag: string) => flag.toLowerCase().includes("no face detected"));
+  };
+
 
   if (loading) {
     return (
@@ -441,6 +547,133 @@ export default function ApplicantDetailHistoryPage() {
                 <p className="text-gray-800 whitespace-pre-wrap">
                   {selectedVideo.transcript || "No transcript available"}
                 </p>
+              </div>
+
+              {/* Authenticity / Script Check */}
+              <div className="bg-white border-2 border-gray-200 rounded-xl p-6">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-bold text-gray-900">Authenticity / Script Check</h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      AI signal for possible script reading. It does not auto-fail a candidate.
+                    </p>
+                  </div>
+                  <span
+                    className={[
+                      "inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold",
+                      getScriptStatusClass(selectedVideo.script_reading_status),
+                    ].join(" ")}
+                  >
+                    {getScriptStatusLabel(selectedVideo.script_reading_status)}
+                  </span>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-600">
+                  <span className="font-medium text-gray-700">Script reading assessment:</span>
+                  <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 text-xs font-semibold">
+                    {getScriptSummary(selectedVideo.script_reading_status)}
+                  </span>
+                </div>
+
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setScriptDetailsOpen((prev) => ({
+                        ...prev,
+                        [selectedVideo.id]: !prev[selectedVideo.id],
+                      }))
+                    }
+                    className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    {scriptDetailsOpen[selectedVideo.id] ? "Hide details" : "Show details"}
+                  </button>
+                </div>
+
+                {scriptDetailsOpen[selectedVideo.id] && (
+                  <div className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
+                    {hasNoFaceFlag(selectedVideo.script_reading_data) && (
+                      <div className="bg-white border border-gray-200 rounded-lg p-4">
+                        <p className="text-sm font-semibold text-gray-800">Why this assessment is unavailable</p>
+                        <ul className="mt-2 text-sm text-gray-700 list-disc list-inside space-y-1">
+                          <li>The system could not clearly detect the applicant's face.</li>
+                          <li>Common causes include camera angle, lighting, or temporary obstruction.</li>
+                          <li>This does NOT automatically disqualify the applicant.</li>
+                        </ul>
+                      </div>
+                    )}
+                    {selectedVideo.script_reading_data ? (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-gray-700">
+                          <div className="flex items-center justify-between">
+                            <span>Gaze at camera</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.gaze_at_camera_percent, "%")}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Gaze left</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.gaze_left_percent, "%")}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Gaze right</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.gaze_right_percent, "%")}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Gaze up</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.gaze_up_percent, "%")}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Gaze down</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.gaze_down_percent, "%")}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Horizontal scanning/min</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.horizontal_scanning_per_minute)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Primary off-camera direction</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.primary_off_camera_direction)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Confidence</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.confidence, "%")}
+                            </span>
+                          </div>
+                        </div>
+
+                        {Array.isArray(selectedVideo.script_reading_data?.flags) &&
+                        selectedVideo.script_reading_data?.flags.length > 0 ? (
+                          <div>
+                            <p className="text-sm font-semibold text-gray-700 mb-2">Technical details</p>
+                            <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                              {selectedVideo.script_reading_data.flags.map((flag: string, index: number) => (
+                                <li key={index}>{flag}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-500">No flags recorded.</p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-sm text-gray-500">No script detection details available for this response.</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* AI Analysis */}
