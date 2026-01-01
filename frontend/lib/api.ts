@@ -24,8 +24,6 @@ api.interceptors.request.use(
       "/applicants/",
       "/auth/login/",
       "/auth/register/",
-      "/training/modules/",
-      "/training/sessions/",
       "/interviews/",
       "/analysis/",
     ];
@@ -138,42 +136,6 @@ export const interviewAPI = {
 };
 
 export { api, API_BASE_URL };
-
-export const trainingAPI = {
-  // Get all training modules
-  getModules: () => api.get("/training/modules/"),
-
-  // Create a new training session
-  createSession: (data: { applicant_id: number; module_id: number }) => api.post("/training/sessions/", data),
-
-  // Get session details
-  getSession: (id: number) => api.get(`/training/sessions/${id}/`),
-
-  // Submit a practice response
-  submitResponse: (sessionId: number, data: { question_text: string; video: Blob }) => {
-    const formData = new FormData();
-    formData.append("question_text", data.question_text);
-
-    // Determine file extension from blob type
-    const blobType = data.video.type;
-    let extension = "webm"; // default
-    if (blobType.includes("mp4")) {
-      extension = "mp4";
-    } else if (blobType.includes("webm")) {
-      extension = "webm";
-    } else if (blobType.includes("mov") || blobType.includes("quicktime")) {
-      extension = "mov";
-    }
-
-    formData.append("video", data.video, `practice_response.${extension}`);
-
-    return api.post(`/training/sessions/${sessionId}/submit_response/`, formData, {
-      headers: {
-        "Content-Type": "multipart/form-data",
-      },
-    });
-  },
-};
 
 export const questionAPI = {
   // Get all active questions (with optional position and type filters)

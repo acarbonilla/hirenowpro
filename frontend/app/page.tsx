@@ -46,12 +46,6 @@ export default function HomePage() {
           >
             Get Started
           </button>
-          <button
-            onClick={() => router.push("/training")}
-            className="bg-white text-blue-600 border-2 border-blue-600 px-8 py-3 rounded-lg text-lg font-semibold hover:bg-blue-50 transition-colors"
-          >
-            Practice Center
-          </button>
         </div>
       </section>
 

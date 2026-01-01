@@ -69,7 +69,7 @@ INSTALLED_APPS = [
     'notifications',
     'results',
     'monitoring',
-    'training',
+    
 ]
 
 MIDDLEWARE = [
@@ -178,8 +178,6 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'registration_hourly': '5/hour',
         'registration_daily': '10/day',
-        'training_upload_minute': '5/minute',
-        'training_upload_hour': '20/hour',
     },
 }
 
@@ -281,10 +279,6 @@ APPLICANT_TOKEN_EXPIRY_HOURS = int(os.getenv("APPLICANT_TOKEN_EXPIRY_HOURS", "12
 
 # Debug flags
 LOG_HR_AUTH = False
-
-# Training uploads
-TRAINING_MAX_UPLOAD_SIZE = int(os.getenv("TRAINING_MAX_UPLOAD_SIZE", str(25 * 1024 * 1024)))
-
 
 # ============================
 # MEDIA FILES (for video uploads, documents)
