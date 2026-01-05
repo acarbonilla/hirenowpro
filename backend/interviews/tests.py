@@ -8,6 +8,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from .models import Interview, InterviewQuestion, VideoResponse, AIAnalysis
 from applicants.models import Applicant
 from .views import select_questions_for_interview
+from .serializers import InterviewQuestionWriteSerializer
 
 
 class InterviewQuestionModelTest(TestCase):
@@ -596,6 +597,42 @@ class InterviewQuestionSelectionTest(TestCase):
         active = interview.active_questions
         self.assertEqual(len(active), 1)
         self.assertEqual(active[0].id, self.helpdesk_q1.id)
+
+
+class InterviewQuestionAlignmentTest(TestCase):
+    """Guardrail: reject questions whose text suggests a different position."""
+
+    def setUp(self):
+        from .type_models import QuestionType, PositionType
+
+        self.qtype_general, _ = QuestionType.objects.get_or_create(code="general", defaults={"name": "General"})
+        self.position_network, _ = PositionType.objects.get_or_create(
+            code="network_engineer", defaults={"name": "Network Engineer"}
+        )
+        self.position_customer, _ = PositionType.objects.get_or_create(
+            code="customer_service", defaults={"name": "Customer Service"}
+        )
+
+    def test_guardrail_blocks_mismatched_position(self):
+        payload = {
+            "question_text": "Explain how you would configure a router and subnetting.",
+            "question_type": self.qtype_general.id,
+            "category": self.position_customer.id,
+            "competency": "technical_reasoning",
+        }
+        serializer = InterviewQuestionWriteSerializer(data=payload)
+        self.assertFalse(serializer.is_valid())
+        self.assertIn("position_type", serializer.errors)
+
+    def test_guardrail_allows_matching_position(self):
+        payload = {
+            "question_text": "Explain how you would configure a router and subnetting.",
+            "question_type": self.qtype_general.id,
+            "category": self.position_network.id,
+            "competency": "technical_reasoning",
+        }
+        serializer = InterviewQuestionWriteSerializer(data=payload)
+        self.assertTrue(serializer.is_valid(), serializer.errors)
 
 
 class VideoResponseValidationTest(APITestCase):

@@ -331,6 +331,8 @@ class ReviewSummarySerializer(serializers.ModelSerializer):
     ai_overall_score = serializers.SerializerMethodField()
     recommendation = serializers.SerializerMethodField()
     applicant = serializers.SerializerMethodField()
+    integrity_metadata = serializers.SerializerMethodField()
+    consent_acknowledged_at = serializers.DateTimeField(source="interview.consent_acknowledged_at", read_only=True)
     hr_decision = serializers.CharField(read_only=True)
     hr_decision_at = serializers.DateTimeField(read_only=True)
     interview_id = serializers.IntegerField(source="interview.id", read_only=True)
@@ -388,6 +390,10 @@ class ReviewSummarySerializer(serializers.ModelSerializer):
             "phone": getattr(applicant, "phone", None),
         }
 
+    def get_integrity_metadata(self, obj):
+        interview = getattr(obj, "interview", None)
+        return getattr(interview, "integrity_metadata", None) or {}
+
     class Meta:
         model = InterviewResult
         fields = [
@@ -406,4 +412,6 @@ class ReviewSummarySerializer(serializers.ModelSerializer):
             "final_decision_notes",
             "created_at",
             "applicant",
+            "integrity_metadata",
+            "consent_acknowledged_at",
         ]

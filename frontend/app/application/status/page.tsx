@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import axios from 'axios';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
@@ -70,12 +71,12 @@ export default function ApplicationStatusPage() {
         )}
 
         <div className="mt-6">
-          <a
+          <Link
             href="/"
             className="inline-block px-6 py-2 rounded-lg bg-purple-600 text-white font-medium hover:bg-purple-700 transition"
           >
             Return to Home
-          </a>
+          </Link>
         </div>
 
         <div className="border-t pt-4 mt-4">

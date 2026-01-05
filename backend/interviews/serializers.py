@@ -14,6 +14,7 @@ from applicants.serializers import ApplicantListSerializer
 from applicants.models import OfficeLocation
 from django.db.models import Q
 from applicants.models import Applicant
+from .question_alignment import get_alignment_error
 
 
 class OfficeMiniSerializer(serializers.ModelSerializer):
@@ -36,6 +37,13 @@ class JobPositionSerializer(serializers.ModelSerializer):
             "name",
             "code",
             "description",
+            "about_role",
+            "key_responsibilities",
+            "required_skills",
+            "qualifications",
+            "salary_min",
+            "salary_max",
+            "salary_currency",
             "is_active",
             "job_category",
             "category",
@@ -60,6 +68,13 @@ class PublicJobPositionSerializer(serializers.ModelSerializer):
             "name",
             "code",
             "description",
+            "about_role",
+            "key_responsibilities",
+            "required_skills",
+            "qualifications",
+            "salary_min",
+            "salary_max",
+            "salary_currency",
             "is_active",
             "category_detail",
             "offices_detail",
@@ -193,6 +208,12 @@ class InterviewQuestionWriteSerializer(serializers.ModelSerializer):
         category = attrs.get("category") or getattr(self.instance, "category", None)
         if category:
             attrs["position_type"] = category
+        question_text = attrs.get("question_text") or getattr(self.instance, "question_text", None)
+        assigned_code = getattr(category, "code", None)
+        if self.instance is not None:
+            error = get_alignment_error(question_text, assigned_code)
+            if error:
+                raise serializers.ValidationError({"position_type": error})
         return attrs
 
 
@@ -361,6 +382,8 @@ class InterviewSerializer(serializers.ModelSerializer):
             'authenticity_flag',
             'authenticity_status',
             'authenticity_notes',
+            'consent_acknowledged_at',
+            'integrity_metadata',
             'questions',
             'video_responses'
         ]
@@ -382,6 +405,8 @@ class InterviewSerializer(serializers.ModelSerializer):
             'decision_set_at',
             'email_sent',
             'email_sent_at',
+            'consent_acknowledged_at',
+            'integrity_metadata',
         ]
     
     def get_position_type(self, obj):

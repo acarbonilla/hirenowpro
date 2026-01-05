@@ -4,6 +4,8 @@ from applicants.models import Applicant, OfficeLocation
 from .type_models import PositionType, QuestionType
 from django.utils.functional import cached_property
 from django.utils import timezone
+from django.core.exceptions import ValidationError
+from .question_alignment import get_alignment_error
 
 # Controlled competency list for initial interview screening
 COMPETENCY_CHOICES = [
@@ -62,6 +64,13 @@ class InterviewQuestion(models.Model):
     def __str__(self):
         question_type_name = self.question_type.name if self.question_type else "General"
         return f"{question_type_name}: {self.question_text[:50]}"
+
+    def clean(self):
+        super().clean()
+        assigned_code = getattr(self.position_type, "code", None)
+        error = get_alignment_error(self.question_text, assigned_code)
+        if error:
+            raise ValidationError({"position_type": error})
 
 
 class Interview(models.Model):
@@ -148,6 +157,16 @@ class Interview(models.Model):
     authenticity_notes = models.TextField(
         blank=True,
         help_text="HR notes on authenticity investigation"
+    )
+    consent_acknowledged_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when the applicant acknowledged the integrity notice",
+    )
+    integrity_metadata = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Advisory integrity signals captured during the interview session",
     )
 
     # HR Decision Tracking
@@ -485,6 +504,13 @@ class JobPosition(models.Model):
     name = models.CharField(max_length=255)
     code = models.SlugField(unique=True)
     description = models.TextField()
+    about_role = models.TextField(blank=True)
+    key_responsibilities = models.JSONField(default=list, blank=True)
+    required_skills = models.JSONField(default=list, blank=True)
+    qualifications = models.JSONField(default=list, blank=True)
+    salary_min = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    salary_max = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
+    salary_currency = models.CharField(max_length=10, default="PHP")
     is_active = models.BooleanField(default=True)
     job_category = models.ForeignKey(
         PositionType,

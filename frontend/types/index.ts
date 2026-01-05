@@ -100,6 +100,30 @@ export interface InterviewAnalysis {
   }[];
 }
 
+export interface JobPosition {
+  id: number;
+  name: string;
+  code: string;
+  description: string;
+  about_role?: string | null;
+  is_active: boolean;
+  employment_type?: string;
+  salary_min?: string | number | null;
+  salary_max?: string | number | null;
+  salary_currency?: string | null;
+  key_responsibilities?: string[] | string | null;
+  required_skills?: string[] | string | null;
+  qualifications?: string[] | string | null;
+  category_detail?: {
+    id: number;
+    name: string;
+  };
+  offices_detail?: {
+    id: number;
+    name: string;
+  }[];
+}
+
 export interface ApiError {
   message: string;
   errors?: Record<string, string[]>;

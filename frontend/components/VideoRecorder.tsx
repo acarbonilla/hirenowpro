@@ -37,22 +37,6 @@ export default function VideoRecorder({
     const animationFrameRef = useRef<number | null>(null);
     const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-    useEffect(() => {
-        startCamera();
-        return () => {
-            stopCamera();
-            if (animationFrameRef.current) {
-                cancelAnimationFrame(animationFrameRef.current);
-            }
-            if (timerRef.current) {
-                clearInterval(timerRef.current);
-            }
-            if (audioContextRef.current) {
-                audioContextRef.current.close();
-            }
-        };
-    }, []);
-
     const getDomExceptionName = (err: unknown) => {
         return err instanceof DOMException ? err.name : "";
     };
@@ -226,6 +210,22 @@ export default function VideoRecorder({
             setStream(null);
         }
     };
+
+    useEffect(() => {
+        startCamera();
+        return () => {
+            stopCamera();
+            if (animationFrameRef.current) {
+                cancelAnimationFrame(animationFrameRef.current);
+            }
+            if (timerRef.current) {
+                clearInterval(timerRef.current);
+            }
+            if (audioContextRef.current) {
+                audioContextRef.current.close();
+            }
+        };
+    }, []);
 
     const startRecording = () => {
         if (!stream) return;

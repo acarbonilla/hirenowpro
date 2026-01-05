@@ -1,5 +1,7 @@
+import json
 import logging
 import time
+from django.utils.dateparse import parse_datetime
 from rest_framework import generics, status, viewsets
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny
@@ -33,6 +35,75 @@ def _next_question_index(interview, answered_ids):
         if question_id not in answered_ids:
             return index
     return max(0, len(selected_ids) - 1)
+
+
+def _merge_timestamp_list(existing, incoming):
+    existing_list = [ts for ts in (existing or []) if ts]
+    incoming_list = [ts for ts in (incoming or []) if ts]
+    if not incoming_list:
+        return existing_list
+    existing_set = set(existing_list)
+    merged = existing_list[:]
+    for ts in incoming_list:
+        if ts not in existing_set:
+            merged.append(ts)
+            existing_set.add(ts)
+    return merged
+
+
+def _merge_integrity_metadata(existing, incoming):
+    if not isinstance(existing, dict):
+        existing = {}
+    if not isinstance(incoming, dict):
+        return existing
+
+    merged = dict(existing)
+    fullscreen_existing = merged.get("fullscreen", {}) or {}
+    fullscreen_incoming = incoming.get("fullscreen", {}) or {}
+    merged["fullscreen"] = {
+        "supported": bool(fullscreen_existing.get("supported")) or bool(fullscreen_incoming.get("supported")),
+        "exit_count": max(fullscreen_existing.get("exit_count", 0), fullscreen_incoming.get("exit_count", 0)),
+        "exit_timestamps": _merge_timestamp_list(
+            fullscreen_existing.get("exit_timestamps"),
+            fullscreen_incoming.get("exit_timestamps"),
+        ),
+        "not_supported_count": max(
+            fullscreen_existing.get("not_supported_count", 0),
+            fullscreen_incoming.get("not_supported_count", 0),
+        ),
+        "not_supported_timestamps": _merge_timestamp_list(
+            fullscreen_existing.get("not_supported_timestamps"),
+            fullscreen_incoming.get("not_supported_timestamps"),
+        ),
+    }
+
+    focus_existing = merged.get("focus", {}) or {}
+    focus_incoming = incoming.get("focus", {}) or {}
+    merged["focus"] = {
+        "blur_count": max(focus_existing.get("blur_count", 0), focus_incoming.get("blur_count", 0)),
+        "total_blur_seconds": max(
+            focus_existing.get("total_blur_seconds", 0),
+            focus_incoming.get("total_blur_seconds", 0),
+        ),
+    }
+
+    tab_existing = merged.get("tab_switches", {}) or {}
+    tab_incoming = incoming.get("tab_switches", {}) or {}
+    merged["tab_switches"] = {
+        "count": max(tab_existing.get("count", 0), tab_incoming.get("count", 0)),
+    }
+
+    refresh_existing = merged.get("refresh", {}) or {}
+    refresh_incoming = incoming.get("refresh", {}) or {}
+    merged["refresh"] = {
+        "count": max(refresh_existing.get("count", 0), refresh_incoming.get("count", 0)),
+    }
+
+    captured_at = incoming.get("captured_at")
+    if captured_at:
+        merged["last_updated_at"] = captured_at
+
+    return merged
 
 
 class PublicInterviewCreateView(generics.CreateAPIView):
@@ -253,10 +324,29 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Interview already submitted."}, status=status.HTTP_400_BAD_REQUEST)
 
         logger.info("Interview %s submission received", interview.id)
+        integrity_payload = request.data.get("integrity")
+        if isinstance(integrity_payload, str):
+            try:
+                integrity_payload = json.loads(integrity_payload)
+            except ValueError:
+                integrity_payload = None
+        update_fields = ["status", "submission_date", "last_activity_at"]
+        if isinstance(integrity_payload, dict):
+            interview.integrity_metadata = _merge_integrity_metadata(
+                getattr(interview, "integrity_metadata", None),
+                integrity_payload,
+            )
+            update_fields.append("integrity_metadata")
+            consent_at = integrity_payload.get("consent_acknowledged_at")
+            if consent_at and not interview.consent_acknowledged_at:
+                parsed = parse_datetime(consent_at)
+                if parsed is not None:
+                    interview.consent_acknowledged_at = parsed
+                    update_fields.append("consent_acknowledged_at")
         interview.status = "processing"
         interview.submission_date = timezone.now()
         interview.last_activity_at = timezone.now()
-        interview.save(update_fields=["status", "submission_date", "last_activity_at"])
+        interview.save(update_fields=update_fields)
 
         # Create processing queue entry for visibility (best-effort)
         try:
@@ -277,6 +367,47 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         logger.info("Interview %s submit completed in %sms", interview.id, elapsed_ms)
 
         return Response({"detail": "Interview submitted successfully."}, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=["post", "patch"],
+        url_path="integrity",
+        permission_classes=[AllowAny],
+        authentication_classes=[],
+    )
+    def integrity(self, request, pk=None):
+        interview = self.get_object()
+        payload = request.data.get("integrity", request.data)
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except ValueError:
+                payload = None
+
+        if not isinstance(payload, dict):
+            return Response({"detail": "Integrity payload ignored."}, status=status.HTTP_200_OK)
+
+        update_fields = ["integrity_metadata"]
+        interview.integrity_metadata = _merge_integrity_metadata(
+            getattr(interview, "integrity_metadata", None),
+            payload,
+        )
+
+        consent_at = payload.get("consent_acknowledged_at")
+        if consent_at and not interview.consent_acknowledged_at:
+            parsed = parse_datetime(consent_at)
+            if parsed is not None:
+                interview.consent_acknowledged_at = parsed
+                update_fields.append("consent_acknowledged_at")
+
+        try:
+            interview.save(update_fields=update_fields)
+        except Exception:
+            logger.warning(
+                "Integrity metadata save failed",
+                extra={"interview_id": interview.id},
+            )
+        return Response({"detail": "Integrity metadata recorded."}, status=status.HTTP_200_OK)
 
 
 class PublicPositionTypeLookupView(generics.ListAPIView):

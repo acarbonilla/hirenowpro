@@ -96,5 +96,7 @@ class InterviewReviewDetails(APIView):
                 "weights_used": competency_score_data["weights_used"],
                 "role_profile": competency_score_data["role_profile"],
                 "ai_recommendation_explanation": competency_score_data["ai_recommendation_explanation"],
+                "integrity_metadata": getattr(interview, "integrity_metadata", None) or {},
+                "consent_acknowledged_at": getattr(interview, "consent_acknowledged_at", None),
             }
         )

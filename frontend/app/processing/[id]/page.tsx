@@ -16,11 +16,8 @@ export default function ProcessingPage() {
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    let statusCheckInterval: NodeJS.Timeout;
-
     // Timer for elapsed time
-    interval = setInterval(() => {
+    const interval = setInterval(() => {
       setElapsedTime((prev) => prev + 1);
 
       // Update progress (simulate - reaches ~80% in 5 minutes)
@@ -62,8 +59,8 @@ export default function ProcessingPage() {
     };
 
     // Check immediately and then every 10 seconds
+    const statusCheckInterval = setInterval(checkStatus, 10000);
     checkStatus();
-    statusCheckInterval = setInterval(checkStatus, 10000);
 
     // Cleanup
     return () => {

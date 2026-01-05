@@ -17,7 +17,9 @@ interface Position {
   is_active: boolean;
   order: number;
   employment_type?: string;
-  salary?: string;
+  salary_min?: string | null;
+  salary_max?: string | null;
+  salary_currency?: string | null;
   key_responsibilities?: string;
   required_skills?: string;
   qualifications?: string;
@@ -47,7 +49,9 @@ export default function PositionsManagementPage() {
     name: "",
     description: "",
     employment_type: "Full-time",
-    salary: "",
+    salary_min: "",
+    salary_max: "",
+    salary_currency: "PHP",
     key_responsibilities: "",
     required_skills: "",
     qualifications: "",
@@ -57,16 +61,6 @@ export default function PositionsManagementPage() {
     offices: [] as number[],
   });
   const selectedCategory = categoriesOptions.find((c) => c.id === (formData.category ?? -1));
-
-  useEffect(() => {
-    initialize();
-  }, []);
-
-  const initialize = async () => {
-    const allowed = await checkAccess();
-    if (!allowed) return;
-    await Promise.all([fetchPositions(), fetchOffices(), fetchCategories()]);
-  };
 
   const checkAccess = async () => {
     const token = getHRToken();
@@ -138,6 +132,16 @@ export default function PositionsManagementPage() {
     }
   };
 
+  const initialize = async () => {
+    const allowed = await checkAccess();
+    if (!allowed) return;
+    await Promise.all([fetchPositions(), fetchOffices(), fetchCategories()]);
+  };
+
+  useEffect(() => {
+    initialize();
+  }, []);
+
   const handleAdd = () => {
     if (!canEdit) {
       setError("You have read-only access to positions.");
@@ -148,15 +152,17 @@ export default function PositionsManagementPage() {
       name: "",
       description: "",
       employment_type: "Full-time",
-      salary: "",
+      salary_min: "",
+      salary_max: "",
+      salary_currency: "PHP",
       key_responsibilities: "",
       required_skills: "",
-    qualifications: "",
-    is_active: true,
-    order: positions.length,
-    category: null,
-    offices: [],
-  });
+      qualifications: "",
+      is_active: true,
+      order: positions.length,
+      category: null,
+      offices: [],
+    });
     setEditingPosition(null);
     setShowAddModal(true);
   };
@@ -180,15 +186,17 @@ export default function PositionsManagementPage() {
       name: position.name,
       description: position.description,
       employment_type: position.employment_type || "Full-time",
-      salary: position.salary || "",
+      salary_min: position.salary_min ?? "",
+      salary_max: position.salary_max ?? "",
+      salary_currency: position.salary_currency || "PHP",
       key_responsibilities: position.key_responsibilities || "",
       required_skills: position.required_skills || "",
       qualifications: position.qualifications || "",
-    is_active: position.is_active,
-    order: position.order,
-    category: position.category_detail?.id ?? null,
-    offices: (position.offices_detail || []).map((o) => Number(o.id)),
-  });
+      is_active: position.is_active,
+      order: position.order,
+      category: position.category_detail?.id ?? null,
+      offices: (position.offices_detail || []).map((o) => Number(o.id)),
+    });
     setEditingPosition(position);
     setShowAddModal(true);
   };
@@ -208,6 +216,9 @@ export default function PositionsManagementPage() {
 
       const payload = {
         ...formData,
+        salary_min: formData.salary_min ? formData.salary_min : null,
+        salary_max: formData.salary_max ? formData.salary_max : null,
+        salary_currency: formData.salary_currency || "PHP",
         offices: Array.isArray(formData.offices) ? formData.offices.map((id) => Number(id)) : [],
         category: formData.category !== null ? Number(formData.category) : null,
       };
@@ -559,13 +570,40 @@ export default function PositionsManagementPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Salary</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Salary Currency</label>
                   <input
                     type="text"
-                    value={formData.salary}
-                    onChange={(e) => setFormData({ ...formData, salary: e.target.value })}
+                    value={formData.salary_currency}
+                    onChange={(e) => setFormData({ ...formData, salary_currency: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                    placeholder="e.g., $15-20/hr, $2000/month, etc."
+                    placeholder="e.g., PHP, USD"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Salary Min</label>
+                  <input
+                    type="number"
+                    value={formData.salary_min}
+                    onChange={(e) => setFormData({ ...formData, salary_min: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="e.g., 15000"
+                    min="0"
+                    step="0.01"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Salary Max</label>
+                  <input
+                    type="number"
+                    value={formData.salary_max}
+                    onChange={(e) => setFormData({ ...formData, salary_max: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    placeholder="e.g., 30000"
+                    min="0"
+                    step="0.01"
                   />
                 </div>
               </div>

@@ -10,6 +10,14 @@ import VideoPlayer from "@/components/VideoPlayer";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
+function formatDurationSeconds(seconds?: number | null): string {
+  if (seconds == null || !Number.isFinite(seconds)) return "0s";
+  const totalSeconds = Math.max(0, Math.round(seconds));
+  const minutes = Math.floor(totalSeconds / 60);
+  const remainingSeconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`;
+}
+
 // TYPES --------------------------------------------------------------
 
 interface Question {
@@ -39,6 +47,28 @@ interface VideoResponse {
   status: string;
 }
 
+interface IntegrityMetadata {
+  fullscreen?: {
+    supported?: boolean;
+    exit_count?: number;
+    exit_timestamps?: string[];
+    not_supported_count?: number;
+    not_supported_timestamps?: string[];
+  };
+  focus?: {
+    blur_count?: number;
+    total_blur_seconds?: number;
+  };
+  tab_switches?: {
+    count?: number;
+  };
+  refresh?: {
+    count?: number;
+  };
+  last_updated_at?: string;
+  captured_at?: string;
+}
+
 interface ReviewData {
   result_id: number;
   interview_id: number;
@@ -65,6 +95,8 @@ interface ReviewData {
   email_sent_at?: string | null;
   created_at: string;
   video_responses?: VideoResponse[];
+  integrity_metadata?: IntegrityMetadata;
+  consent_acknowledged_at?: string | null;
 }
 
 const DetailsSkeleton = () => (
@@ -456,6 +488,14 @@ export default function ReviewPage() {
   const hasUnreviewed = totalQuestions > 0 && reviewedCount < totalQuestions;
   const emailSent = !!reviewData.email_sent;
   const canSendEmail = isDecisionFinal && !emailSent && !emailSending;
+  const integrity = reviewData.integrity_metadata;
+  const hasIntegrity = !!integrity && Object.keys(integrity).length > 0;
+  const fullscreenExits = integrity?.fullscreen?.exit_count ?? 0;
+  const focusLosses = integrity?.focus?.blur_count ?? 0;
+  const focusLossTime = formatDurationSeconds(integrity?.focus?.total_blur_seconds ?? 0);
+  const tabSwitches = integrity?.tab_switches?.count ?? 0;
+  const refreshCount = integrity?.refresh?.count ?? 0;
+  const capturedAt = integrity?.last_updated_at || integrity?.captured_at || null;
 
   const openDecisionModal = () => {
     if (!canFinalize) return;
@@ -540,6 +580,47 @@ export default function ReviewPage() {
             <p className="font-semibold">{reviewData.applicant.phone}</p>
           </div>
         </div>
+      </div>
+
+      {/* Integrity Signals */}
+      <div className="bg-white p-6 shadow rounded-xl border">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-gray-600">Integrity Signals</p>
+            <p className="text-xs text-gray-500">Advisory only; no automatic penalties.</p>
+          </div>
+          {reviewData.consent_acknowledged_at && (
+            <span className="text-xs text-gray-500">
+              Consent acknowledged: {new Date(reviewData.consent_acknowledged_at).toLocaleString()}
+            </span>
+          )}
+        </div>
+        {hasIntegrity ? (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+            <div className="rounded-lg border border-gray-200 p-3">
+              <p className="text-xs text-gray-500">Fullscreen exits</p>
+              <p className="text-lg font-semibold text-gray-900">{fullscreenExits}</p>
+            </div>
+            <div className="rounded-lg border border-gray-200 p-3">
+              <p className="text-xs text-gray-500">Focus losses</p>
+              <p className="text-lg font-semibold text-gray-900">{focusLosses}</p>
+              <p className="text-xs text-gray-500">{focusLossTime} out of focus</p>
+            </div>
+            <div className="rounded-lg border border-gray-200 p-3">
+              <p className="text-xs text-gray-500">Tab switches</p>
+              <p className="text-lg font-semibold text-gray-900">{tabSwitches}</p>
+              <p className="text-xs text-gray-500">Refreshes: {refreshCount}</p>
+            </div>
+            <div className="rounded-lg border border-gray-200 p-3">
+              <p className="text-xs text-gray-500">Captured at</p>
+              <p className="text-sm text-gray-700">
+                {capturedAt ? new Date(capturedAt).toLocaleString() : "Not recorded"}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-gray-500">No integrity metadata recorded for this interview.</p>
+        )}
       </div>
 
       {/* Interview-Level Decision Warning */}

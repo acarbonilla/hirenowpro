@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { authAPI } from "@/lib/api";
 import { setHRAuth, clearHRAuth } from "@/lib/auth-hr";
 
@@ -153,9 +154,9 @@ export default function LoginPage() {
           <div className="text-center">
             <p className="text-sm text-gray-600">
               For applicants:{" "}
-              <a href="/" className="font-medium text-indigo-600 hover:text-indigo-500">
+              <Link href="/" className="font-medium text-indigo-600 hover:text-indigo-500">
                 Start Interview
-              </a>
+              </Link>
             </p>
           </div>
         </form>

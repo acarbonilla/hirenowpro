@@ -21,6 +21,7 @@ interface Question {
   question_text: string;
   question_type: number | TypeDetail;
   question_type_detail?: TypeDetail;
+  position_type?: number | TypeDetail;
   category: number | TypeDetail;
   category_detail?: TypeDetail;
   order: number;
@@ -59,11 +60,13 @@ export default function QuestionsPage() {
   const [saving, setSaving] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [formError, setFormError] = useState("");
 
   // Form state for add/edit
   const [formData, setFormData] = useState({
     question_text: "",
     question_type_id: 0,
+    position_type_id: 0,
     category_id: 0,
     order: 0,
     competency: "communication",
@@ -213,9 +216,10 @@ export default function QuestionsPage() {
 
   const handleAddQuestion = () => {
     setEditingQuestion(null);
+    setFormError("");
     // Set default IDs to first available type
     const defaultQuestionTypeId = questionTypes.find((t) => t.code === "general")?.id || questionTypes[0]?.id || 0;
-    const defaultCategoryId = positionTypes.find((t) => t.code === "general")?.id || positionTypes[0]?.id || 0;
+    const defaultPositionTypeId = positionTypes.find((t) => t.code === "general")?.id || positionTypes[0]?.id || 0;
 
     // Calculate next order number automatically
     const maxOrder = questions.length > 0 ? Math.max(...questions.map((q) => q.order)) : -1;
@@ -223,7 +227,8 @@ export default function QuestionsPage() {
     setFormData({
       question_text: "",
       question_type_id: defaultQuestionTypeId,
-      category_id: defaultCategoryId,
+      position_type_id: defaultPositionTypeId,
+      category_id: defaultPositionTypeId,
       order: maxOrder + 1,
       competency: "communication",
     });
@@ -232,10 +237,12 @@ export default function QuestionsPage() {
 
   const handleEditQuestion = (question: Question) => {
     setEditingQuestion(question);
+    setFormError("");
 
     // Extract IDs from the question object
     let questionTypeId = 0;
     let positionTypeId = 0;
+    let categoryId = 0;
 
     if (typeof question.question_type === "object" && question.question_type !== null) {
       questionTypeId = question.question_type.id;
@@ -243,16 +250,25 @@ export default function QuestionsPage() {
       questionTypeId = question.question_type;
     }
 
-    if (typeof question.category === "object" && question.category !== null) {
-      positionTypeId = question.category.id;
-    } else if (typeof question.category === "number") {
-      positionTypeId = question.category;
+    if (typeof question.position_type === "object" && question.position_type !== null) {
+      positionTypeId = question.position_type.id;
+    } else if (typeof question.position_type === "number") {
+      positionTypeId = question.position_type;
     }
+
+    if (typeof question.category === "object" && question.category !== null) {
+      categoryId = question.category.id;
+    } else if (typeof question.category === "number") {
+      categoryId = question.category;
+    }
+
+    const resolvedPositionTypeId = positionTypeId || categoryId;
 
     setFormData({
       question_text: question.question_text,
       question_type_id: questionTypeId,
-      category_id: positionTypeId,
+      position_type_id: resolvedPositionTypeId,
+      category_id: resolvedPositionTypeId,
       order: question.order,
       competency: question.competency || "communication",
     });
@@ -261,15 +277,16 @@ export default function QuestionsPage() {
 
   const handleSaveQuestion = async () => {
     if (!formData.question_text.trim()) {
-      alert("Please enter a question text");
+      setFormError("Please enter a question text.");
       return;
     }
 
-    if (!formData.question_type_id || !formData.category_id) {
-      alert("Please select both question type and job category");
+    if (!formData.question_type_id || !formData.position_type_id) {
+      setFormError("Please select both question type and position type.");
       return;
     }
 
+    setFormError("");
     setSaving(true);
     try {
       const token = getHRToken();
@@ -285,7 +302,8 @@ export default function QuestionsPage() {
       const payload = {
         question_text: formData.question_text,
         question_type_id: formData.question_type_id,
-        category_id: formData.category_id,
+        position_type_id: formData.position_type_id,
+        category_id: formData.position_type_id,
         order: order,
         competency: formData.competency,
       };
@@ -303,14 +321,53 @@ export default function QuestionsPage() {
     } catch (err: any) {
       const raw = err?.response?.data;
       console.error("Error saving question:", raw);
-      const message =
-        raw?.detail ||
-        (raw && typeof raw === "object" ? JSON.stringify(raw, null, 2) : String(raw) || "Failed to save question");
-      alert(message);
+      const normalized = normalizeSaveError(raw);
+      if (normalized.positionTypeError) {
+        setFormError("This question is specific to a role. Please select the correct Position Type before saving.");
+      } else {
+        setFormError(normalized.generalError || "Unable to save question. Please review required fields.");
+      }
     } finally {
       setSaving(false);
     }
   };
+
+  const getRoleSpecificHint = (text: string) => {
+    const lowered = text.toLowerCase();
+    const keywords = [
+      "network engineer",
+      "network_engineer",
+      "system administrator",
+      "site reliability engineer",
+      "backend developer",
+      "frontend developer",
+      "database administrator",
+      "security engineer",
+      "full stack developer",
+      "full-stack developer",
+      "fullstack developer",
+    ];
+    return keywords.some((keyword) => lowered.includes(keyword));
+  };
+
+  const normalizeSaveError = (raw: unknown) => {
+    if (raw && typeof raw === "object") {
+      const data = raw as Record<string, unknown>;
+      const positionType = data.position_type;
+      if (Array.isArray(positionType) && positionType[0]) {
+        return { positionTypeError: String(positionType[0]) };
+      }
+      if (typeof positionType === "string" && positionType.trim()) {
+        return { positionTypeError: positionType };
+      }
+      if (typeof data.detail === "string" && data.detail.trim()) {
+        return { generalError: data.detail };
+      }
+    }
+    return { generalError: "Unable to save question. Please review required fields." };
+  };
+
+  const selectedPositionType = positionTypes.find((t) => t.id === formData.position_type_id);
 
   const handleDeleteQuestion = async (id: number) => {
     if (!confirm("Are you sure you want to delete this question?")) return;
@@ -802,7 +859,12 @@ export default function QuestionsPage() {
                 </label>
                 <textarea
                   value={formData.question_text}
-                  onChange={(e) => setFormData({ ...formData, question_text: e.target.value })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, question_text: e.target.value });
+                    if (formError) {
+                      setFormError("");
+                    }
+                  }}
                   rows={4}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                   placeholder="Enter the interview question..."
@@ -816,7 +878,12 @@ export default function QuestionsPage() {
                 </label>
                 <select
                   value={formData.question_type_id}
-                  onChange={(e) => setFormData({ ...formData, question_type_id: parseInt(e.target.value) })}
+                  onChange={(e) => {
+                    setFormData({ ...formData, question_type_id: parseInt(e.target.value) });
+                    if (formError) {
+                      setFormError("");
+                    }
+                  }}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 >
                   <option value="">Select Question Type</option>
@@ -831,20 +898,41 @@ export default function QuestionsPage() {
               {/* Job Category */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Job Category <span className="text-red-500">*</span>
+                  Position Type <span className="text-red-500">*</span>
                 </label>
                 <select
-                  value={formData.category_id}
-                  onChange={(e) => setFormData({ ...formData, category_id: parseInt(e.target.value) })}
+                  value={formData.position_type_id}
+                  onChange={(e) => {
+                    const nextId = parseInt(e.target.value);
+                    setFormData({ ...formData, position_type_id: nextId, category_id: nextId });
+                    if (formError) {
+                      setFormError("");
+                    }
+                  }}
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                 >
-                  <option value="">Select Job Category</option>
+                  <option value="">Select Position Type</option>
                   {positionTypes.map((type) => (
                     <option key={type.id} value={type.id}>
                       {type.name}
                     </option>
                   ))}
                 </select>
+                {formError && (
+                  <p className="mt-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+                    {formError}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Job Category (informational)</label>
+                <input
+                  type="text"
+                  value={selectedPositionType ? selectedPositionType.name : "Select a position type first"}
+                  readOnly
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-600"
+                />
               </div>
 
               {/* Competency (replaces tags/subroles) */}
@@ -868,6 +956,12 @@ export default function QuestionsPage() {
                 </p>
               </div>
 
+              {getRoleSpecificHint(formData.question_text) && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                  This question appears role-specific.
+                </div>
+              )}
+
               {/* Actions */}
               <div className="flex justify-end space-x-3 pt-4">
                 <button
@@ -879,7 +973,7 @@ export default function QuestionsPage() {
                 </button>
                 <button
                   onClick={handleSaveQuestion}
-                  disabled={saving}
+                  disabled={saving || !formData.position_type_id}
                   className="px-6 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-lg hover:from-indigo-700 hover:to-purple-700 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {saving ? "Saving..." : editingQuestion ? "Update Question" : "Add Question"}

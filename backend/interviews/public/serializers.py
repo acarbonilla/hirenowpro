@@ -73,4 +73,18 @@ class PublicJobPositionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = JobPosition
-        fields = ["id", "name", "code", "description", "category", "category_detail"]
+        fields = [
+            "id",
+            "name",
+            "code",
+            "description",
+            "about_role",
+            "key_responsibilities",
+            "required_skills",
+            "qualifications",
+            "salary_min",
+            "salary_max",
+            "salary_currency",
+            "category",
+            "category_detail",
+        ]

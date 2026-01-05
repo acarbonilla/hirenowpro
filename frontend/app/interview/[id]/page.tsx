@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Webcam from "react-webcam";
-import { interviewAPI, api } from "@/lib/api";
+import { interviewAPI, api, API_BASE_URL } from "@/lib/api";
 import { getApplicantToken } from "@/app/utils/auth-applicant";
 import { useStore } from "@/store/useStore";
 import {
@@ -24,11 +24,52 @@ import {
 } from "lucide-react";
 import type { Interview, InterviewQuestion } from "@/types";
 
+type IntegrityMetadata = {
+  fullscreen: {
+    supported: boolean;
+    exit_count: number;
+    exit_timestamps: string[];
+    not_supported_count: number;
+    not_supported_timestamps: string[];
+  };
+  focus: {
+    blur_count: number;
+    total_blur_seconds: number;
+  };
+  tab_switches: {
+    count: number;
+  };
+  refresh: {
+    count: number;
+  };
+  consent_acknowledged_at: string | null;
+  captured_at?: string;
+};
+
+// ─────────────────────
+// Utilities
+// ─────────────────────
+const formatDuration = (seconds: number): string => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `00:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+};
+
+const formatTime = (seconds: number): string => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins}:${secs.toString().padStart(2, "0")}`;
+};
+
 export default function InterviewPage() {
+  // ─────────────────────
+  // Hooks: State + Refs
+  // ─────────────────────
   const params = useParams();
   const router = useRouter();
   const interviewId = parseInt(params.id as string);
-  const resumeStorageKey = "resumeInterview";
+  const resumeStorageKey = `resumeInterview:${interviewId}`;
+  const integrityConsentStorageKey = `integrityConsent:${interviewId}`;
 
   const webcamRef = useRef<Webcam>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -76,6 +117,10 @@ export default function InterviewPage() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [silenceStage, setSilenceStage] = useState(0);
   const [silenceDuration, setSilenceDuration] = useState(0);
+  const [showIntegrityConsent, setShowIntegrityConsent] = useState(true);
+  const [integrityConsentChecked, setIntegrityConsentChecked] = useState(false);
+  const [integrityAcknowledged, setIntegrityAcknowledged] = useState(false);
+  const [showFullscreenWarning, setShowFullscreenWarning] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -90,13 +135,167 @@ export default function InterviewPage() {
   const noResponseTriggeredRef = useRef(false);
   const isRecordingRef = useRef(false);
   const stopRecordingRef = useRef<() => void>(() => {});
+  const interviewContainerRef = useRef<HTMLDivElement | null>(null);
+  const integrityRef = useRef<IntegrityMetadata>({
+    fullscreen: {
+      supported: true,
+      exit_count: 0,
+      exit_timestamps: [],
+      not_supported_count: 0,
+      not_supported_timestamps: [],
+    },
+    focus: {
+      blur_count: 0,
+      total_blur_seconds: 0,
+    },
+    tab_switches: {
+      count: 0,
+    },
+    refresh: {
+      count: 0,
+    },
+    consent_acknowledged_at: null,
+  });
+  const lastSentIntegrityRef = useRef<IntegrityMetadata | null>(null);
+  const integrityActiveRef = useRef(false);
+  const focusLossActiveRef = useRef(false);
+  const focusLossStartRef = useRef<number | null>(null);
+  const hadFullscreenRef = useRef(false);
+  const fullscreenRequestedRef = useRef(false);
 
+  // ─────────────────────
+  // Hook-safe Helpers
+  // ─────────────────────
   const handleDataAvailable = useCallback(({ data }: BlobEvent) => {
     if (data.size > 0) {
       setRecordedChunks((prev) => [...prev, data]);
     }
   }, []);
 
+  const buildIntegrityPayload = () => {
+    const base = integrityRef.current;
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    let blurSeconds = base.focus.total_blur_seconds;
+    if (focusLossActiveRef.current && focusLossStartRef.current !== null) {
+      blurSeconds += Math.max(0, (now - focusLossStartRef.current) / 1000);
+    }
+    return {
+      ...base,
+      focus: {
+        ...base.focus,
+        total_blur_seconds: Math.round(blurSeconds),
+      },
+      captured_at: new Date().toISOString(),
+    };
+  };
+
+  const persistIntegrity = useCallback(
+    async (mode: "checkpoint" | "submit" | "unload" = "checkpoint") => {
+      if (!integrityActiveRef.current || !interviewId) return;
+      const payload = buildIntegrityPayload();
+      const comparablePayload = { ...payload, captured_at: undefined };
+      if (
+        lastSentIntegrityRef.current &&
+        JSON.stringify({ ...lastSentIntegrityRef.current, captured_at: undefined }) === JSON.stringify(comparablePayload)
+      ) {
+        return;
+      }
+      lastSentIntegrityRef.current = payload;
+
+      const requestBody = { integrity: payload };
+      if (mode === "unload" && typeof navigator !== "undefined" && navigator.sendBeacon) {
+        try {
+          const url = `${API_BASE_URL}/public/interviews/${interviewId}/integrity/`;
+          const blob = new Blob([JSON.stringify(requestBody)], { type: "application/json" });
+          navigator.sendBeacon(url, blob);
+          return;
+        } catch {
+          // Fall through to async call.
+        }
+      }
+
+      try {
+        await api.post(`/public/interviews/${interviewId}/integrity/`, requestBody);
+      } catch (err) {
+        console.warn("Integrity logging failed", err);
+      }
+    },
+    [interviewId]
+  );
+
+  const handleIntegrityAcknowledge = () => {
+    const timestamp = new Date().toISOString();
+    integrityRef.current.consent_acknowledged_at = timestamp;
+    integrityActiveRef.current = true;
+    setIntegrityAcknowledged(true);
+    setShowIntegrityConsent(false);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem(integrityConsentStorageKey, timestamp);
+    }
+    persistIntegrity("checkpoint");
+  };
+
+  const requestInterviewFullscreen = useCallback(async () => {
+    if (typeof document === "undefined") return;
+    const target = interviewContainerRef.current ?? document.documentElement;
+    if (!target?.requestFullscreen) {
+      integrityRef.current.fullscreen.supported = false;
+      integrityRef.current.fullscreen.not_supported_count += 1;
+      integrityRef.current.fullscreen.not_supported_timestamps.push(new Date().toISOString());
+      return;
+    }
+    fullscreenRequestedRef.current = true;
+    try {
+      await target.requestFullscreen();
+      integrityRef.current.fullscreen.supported = true;
+    } catch (err) {
+      console.warn("Fullscreen request failed", err);
+      integrityRef.current.fullscreen.supported = false;
+      integrityRef.current.fullscreen.not_supported_count += 1;
+      integrityRef.current.fullscreen.not_supported_timestamps.push(new Date().toISOString());
+    }
+  }, []);
+
+  const startFocusLoss = useCallback((source: "blur" | "hidden") => {
+    if (focusLossActiveRef.current || !integrityActiveRef.current) return;
+    focusLossActiveRef.current = true;
+    focusLossStartRef.current = typeof performance !== "undefined" ? performance.now() : Date.now();
+    integrityRef.current.focus.blur_count += 1;
+    if (source === "hidden") {
+      integrityRef.current.tab_switches.count += 1;
+    }
+  }, []);
+
+  const endFocusLoss = useCallback((source: "focus" | "visible") => {
+    if (!focusLossActiveRef.current || !integrityActiveRef.current) return;
+    const now = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const start = focusLossStartRef.current ?? now;
+    const blurSeconds = Math.max(0, (now - start) / 1000);
+    integrityRef.current.focus.total_blur_seconds += blurSeconds;
+    focusLossActiveRef.current = false;
+    focusLossStartRef.current = null;
+  }, []);
+
+  // Initial countdown before first question
+  const startInitialCountdown = useCallback(() => {
+    let countdown = 5;
+    setInitialCountdown(countdown);
+    setShowInitialCountdown(true);
+
+    const countdownInterval = setInterval(() => {
+      countdown--;
+      setInitialCountdown(countdown);
+
+      if (countdown <= 0) {
+        clearInterval(countdownInterval);
+        setShowInitialCountdown(false);
+      }
+    }, 1000);
+  }, []);
+
+  // ─────────────────────
+  // Effects
+  // ─────────────────────
   // Load interview and questions
   useEffect(() => {
     if (!interviewId) return;
@@ -183,10 +382,21 @@ export default function InterviewPage() {
   }, [interviewId]);
 
   useEffect(() => {
-    if (questions.length > 0 && showInitialCountdown) {
+    if (integrityAcknowledged && questions.length > 0 && showInitialCountdown) {
       startInitialCountdown();
     }
-  }, [questions.length]);
+  }, [integrityAcknowledged, questions.length, showInitialCountdown, startInitialCountdown]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const storedConsent = sessionStorage.getItem(integrityConsentStorageKey);
+    if (storedConsent) {
+      integrityRef.current.consent_acknowledged_at = storedConsent;
+      integrityActiveRef.current = true;
+      setIntegrityAcknowledged(true);
+      setShowIntegrityConsent(false);
+    }
+  }, [integrityConsentStorageKey]);
 
   useEffect(() => {
     let mounted = true;
@@ -219,6 +429,84 @@ export default function InterviewPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    integrityRef.current.fullscreen.supported = !!document.documentElement?.requestFullscreen;
+  }, []);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!integrityActiveRef.current) return;
+      const isFullscreen = !!document.fullscreenElement;
+      if (isFullscreen) {
+        hadFullscreenRef.current = true;
+        return;
+      }
+      if (!fullscreenRequestedRef.current || !hadFullscreenRef.current) return;
+      const timestamp = new Date().toISOString();
+      integrityRef.current.fullscreen.exit_count += 1;
+      integrityRef.current.fullscreen.exit_timestamps.push(timestamp);
+      if (integrityRef.current.fullscreen.exit_count === 1) {
+        setShowFullscreenWarning(true);
+      }
+    };
+
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        if (!integrityActiveRef.current) return;
+        if (focusLossActiveRef.current) {
+          integrityRef.current.tab_switches.count += 1;
+          return;
+        }
+        startFocusLoss("hidden");
+        return;
+      }
+      endFocusLoss("visible");
+    };
+    const handleBlur = () => startFocusLoss("blur");
+    const handleFocus = () => endFocusLoss("focus");
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("blur", handleBlur);
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("blur", handleBlur);
+      window.removeEventListener("focus", handleFocus);
+    };
+  }, [startFocusLoss, endFocusLoss]);
+
+  useEffect(() => {
+    const handleCopy = (event: ClipboardEvent) => {
+      event.preventDefault();
+    };
+    const handlePaste = (event: ClipboardEvent) => {
+      event.preventDefault();
+    };
+    const handleContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+    };
+
+    document.addEventListener("copy", handleCopy);
+    document.addEventListener("paste", handlePaste);
+    document.addEventListener("contextmenu", handleContextMenu);
+
+    return () => {
+      document.removeEventListener("copy", handleCopy);
+      document.removeEventListener("paste", handlePaste);
+      document.removeEventListener("contextmenu", handleContextMenu);
+    };
+  }, []);
+
+  // ─────────────────────
+  // Event Handlers
+  // ─────────────────────
   const getMediaErrorMessage = (err: unknown) => {
     const name = err instanceof DOMException ? err.name : "";
     if (name === "NotFoundError") {
@@ -286,6 +574,11 @@ export default function InterviewPage() {
   }, []);
 
   const handleEnableCamera = () => {
+    if (!integrityAcknowledged) {
+      setShowIntegrityConsent(true);
+      return;
+    }
+    requestInterviewFullscreen();
     setPermissionLoading(true);
     setCameraError("");
     setDeviceWarning("");
@@ -295,6 +588,30 @@ export default function InterviewPage() {
     setWebcamKey(prev => prev + 1);
     setTimeout(() => setPermissionLoading(false), 300);
   };
+
+  useEffect(() => {
+    if (!integrityAcknowledged || typeof window === "undefined") return;
+    const wasReloaded = sessionStorage.getItem(resumeStorageKey);
+    if (wasReloaded) {
+      integrityRef.current.refresh.count += 1;
+      sessionStorage.removeItem(resumeStorageKey);
+      persistIntegrity("checkpoint");
+    }
+  }, [integrityAcknowledged, resumeStorageKey, persistIntegrity]);
+
+  useEffect(() => {
+    const handlePageHide = () => {
+      if (!integrityActiveRef.current || typeof window === "undefined") return;
+      sessionStorage.setItem(resumeStorageKey, "1");
+      persistIntegrity("unload");
+    };
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
+    return () => {
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
+    };
+  }, [resumeStorageKey, persistIntegrity]);
 
   const SILENCE_THRESHOLD = 0.02;
   const SILENCE_STAGE_MS = {
@@ -498,23 +815,6 @@ export default function InterviewPage() {
     console.log("MediaRecorder started with state:", mediaRecorder.state);
   }, [handleDataAvailable, startSilenceDetection]);
 
-  // Initial countdown before first question
-  const startInitialCountdown = useCallback(() => {
-    let countdown = 5;
-    setInitialCountdown(countdown);
-    setShowInitialCountdown(true);
-
-    const countdownInterval = setInterval(() => {
-      countdown--;
-      setInitialCountdown(countdown);
-
-      if (countdown <= 0) {
-        clearInterval(countdownInterval);
-        setShowInitialCountdown(false);
-      }
-    }, 1000);
-  }, []);
-
   // Text-to-speech function
   const speakQuestion = useCallback((text: string, questionId?: number) => {
     if (!text) return;
@@ -696,7 +996,7 @@ export default function InterviewPage() {
       console.log("- Duration (formatted):", formatDuration(recordingTime));
       console.log("- Blob size:", blob.size, "bytes");
       console.log("- FormData entries:");
-      for (let pair of formData.entries()) {
+      for (const pair of formData.entries()) {
         console.log("  ", pair[0], ":", typeof pair[1] === "object" ? `File (${pair[1].size} bytes)` : pair[1]);
       }
 
@@ -732,6 +1032,7 @@ export default function InterviewPage() {
 
       setRecordedChunks([]);
       setRecordingTime(0); // Reset recording time for next question
+      persistIntegrity("checkpoint");
 
       // Automatically advance to next question OR auto-submit if last
       if (!isLastQuestion) {
@@ -766,9 +1067,9 @@ export default function InterviewPage() {
     } finally {
       setIsUploading(false);
     }
-  };
-
-  const handleSubmitInterview = async (skipValidation = false) => {
+    };
+  
+    const handleSubmitInterview = async (skipValidation = false) => {
     // Check if all questions are answered (unless skipping validation for auto-submit)
     const answeredCount = answeredQuestions.size;
     console.log(
@@ -801,16 +1102,18 @@ export default function InterviewPage() {
       console.log("Submitting interview:", interviewId);
       console.log("Questions answered:", answeredCount, "of", questions.length);
 
-      await api.post(
-        `/public/interviews/${interviewId}/submit/`,
-        undefined,
-        { headers: { Authorization: `Bearer ${applicantToken}` } }
-      );
+        const integrityPayload = buildIntegrityPayload();
+        await api.post(
+          `/public/interviews/${interviewId}/submit/`,
+          { integrity: integrityPayload },
+          { headers: { Authorization: `Bearer ${applicantToken}` } }
+        );
 
-      console.log("Interview submitted successfully! Redirecting to completion page...");
-      if (typeof window !== "undefined") {
-        sessionStorage.removeItem(resumeStorageKey);
-      }
+        console.log("Interview submitted successfully! Redirecting to completion page...");
+        if (typeof window !== "undefined") {
+          sessionStorage.removeItem(resumeStorageKey);
+          sessionStorage.removeItem(integrityConsentStorageKey);
+        }
       // Redirect to a friendly completion screen; user can then choose
       // to view processing status or return to dashboard.
       router.push(`/interview-complete?id=${interviewId}`);
@@ -834,18 +1137,9 @@ export default function InterviewPage() {
     }
   };
 
-  const formatDuration = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `00:${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
-  };
-
-  const formatTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
-
+  // ─────────────────────
+  // Render
+  // ─────────────────────
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -880,9 +1174,75 @@ export default function InterviewPage() {
   const allQuestionsAnswered = questions.length > 0 && answeredQuestions.size === questions.length;
 
   return (
-    <div className="min-h-screen bg-gray-50 py-8 px-4 relative">
+    <div ref={interviewContainerRef} className="min-h-screen bg-gray-50 py-8 px-4 relative">
+      {showIntegrityConsent && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-xl bg-white p-6 shadow-xl">
+            <h2 className="text-xl font-semibold text-gray-900">Interview Integrity Notice</h2>
+            <p className="mt-2 text-sm text-gray-700">
+              To support interview integrity, this session records when the interview tab loses focus and when
+              fullscreen exits. The interview will not be blocked, and these signals are advisory for HR review only.
+            </p>
+            <p className="mt-2 text-sm text-gray-700">
+              Please stay on this tab and in fullscreen when possible.
+            </p>
+            <label className="mt-4 flex items-start gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={integrityConsentChecked}
+                onChange={(event) => setIntegrityConsentChecked(event.target.checked)}
+              />
+              <span>I understand and want to continue.</span>
+            </label>
+            <div className="mt-4 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleIntegrityAcknowledge}
+                disabled={!integrityConsentChecked}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${
+                  integrityConsentChecked ? "bg-blue-600 hover:bg-blue-700" : "bg-gray-300 cursor-not-allowed"
+                }`}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showFullscreenWarning && (
+        <div className="mb-4 rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-sm text-yellow-900">
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="font-semibold">Fullscreen exited</p>
+              <p className="text-xs text-yellow-800">
+                Please stay in fullscreen when possible. Your interview will continue either way.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowFullscreenWarning(false);
+                  requestInterviewFullscreen();
+                }}
+                className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700"
+              >
+                Return to fullscreen
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowFullscreenWarning(false)}
+                className="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Initial Countdown Overlay - Before First Question */}
-      {showInitialCountdown && (
+      {showInitialCountdown && integrityAcknowledged && (
         <div className="fixed inset-0 bg-linear-to-br from-purple-600 to-blue-600 z-50 flex items-center justify-center">
           <div className="text-center text-white px-4">
             {/* Main Countdown Circle */}
@@ -977,16 +1337,21 @@ export default function InterviewPage() {
                   This interview requires camera and microphone access. When prompted by your browser, please click
                   "Allow". Look for the camera icon in your browser's address bar if you need to change permissions.
                 </p>
-                <button
-                  onClick={handleEnableCamera}
-                  className="mt-3 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 text-sm"
-                  disabled={permissionLoading}
-                >
-                  {permissionLoading ? "Requesting access..." : "Enable Camera & Start Interview"}
-                </button>
-                {permissionState === "denied" && (
-                  <p className="text-xs text-yellow-800 mt-2">
-                    Your browser is currently blocking camera access. Use the camera icon in the address bar to allow
+                  <button
+                    onClick={handleEnableCamera}
+                    className="mt-3 px-4 py-2 bg-yellow-600 text-white rounded-lg hover:bg-yellow-700 text-sm"
+                    disabled={permissionLoading || !integrityAcknowledged}
+                  >
+                    {permissionLoading ? "Requesting access..." : "Enable Camera & Start Interview"}
+                  </button>
+                  {!integrityAcknowledged && (
+                    <p className="text-xs text-yellow-800 mt-2">
+                      Please acknowledge the integrity notice to begin.
+                    </p>
+                  )}
+                  {permissionState === "denied" && (
+                    <p className="text-xs text-yellow-800 mt-2">
+                      Your browser is currently blocking camera access. Use the camera icon in the address bar to allow
                     access, then click the button again.
                   </p>
                 )}

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import {
   ArrowRight,
@@ -15,24 +15,11 @@ import {
 } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import type { LucideProps } from "lucide-react";
+import type { JobPosition } from "@/types";
+import PositionDetailModal from "@/components/PositionDetailModal";
+import { formatSalaryDisplay } from "@/lib/salary";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
-
-interface JobPosition {
-  id: number;
-  name: string;
-  code: string;
-  description: string;
-  is_active: boolean;
-  category_detail?: {
-    id: number;
-    name: string;
-  };
-  offices_detail?: {
-    id: number;
-    name: string;
-  }[];
-}
 
 const iconMap: Record<string, React.ComponentType<LucideProps>> = {
   "virtual-assistant": Headset,
@@ -60,6 +47,11 @@ export default function OpenPositionsPage() {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [locationFilter, setLocationFilter] = useState("");
   const [resumeIntent, setResumeIntent] = useState<{ interviewId: number; position?: string } | null>(null);
+  const [selectedPosition, setSelectedPosition] = useState<JobPosition | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [focusedIndex, setFocusedIndex] = useState<number | null>(null);
+  const cardRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const positionsPerPage = 6;
 
   useEffect(() => {
     fetchPositions();
@@ -107,6 +99,60 @@ export default function OpenPositionsPage() {
     });
   }, [positions, keyword, categoryFilter, locationFilter]);
 
+  const totalPages = Math.max(1, Math.ceil(filteredPositions.length / positionsPerPage));
+  const paginatedPositions = useMemo(() => {
+    const start = (currentPage - 1) * positionsPerPage;
+    return filteredPositions.slice(start, start + positionsPerPage);
+  }, [filteredPositions, currentPage, positionsPerPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [keyword, categoryFilter, locationFilter]);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    setFocusedIndex(null);
+  }, [keyword, categoryFilter, locationFilter, currentPage]);
+
+  useEffect(() => {
+    if (focusedIndex === null) return;
+    const target = cardRefs.current[focusedIndex];
+    target?.focus();
+  }, [focusedIndex, paginatedPositions]);
+
+  useEffect(() => {
+    if (selectedPosition) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) {
+          return;
+        }
+      }
+
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      if (paginatedPositions.length === 0) return;
+
+      event.preventDefault();
+      setFocusedIndex((prev) => {
+        const lastIndex = paginatedPositions.length - 1;
+        if (event.key === "ArrowDown") {
+          return prev === null ? 0 : Math.min(lastIndex, prev + 1);
+        }
+        return prev === null ? lastIndex : Math.max(0, prev - 1);
+      });
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [paginatedPositions, selectedPosition]);
+
   const fetchPositions = async () => {
     try {
       const response = await axios.get(`${API_BASE_URL}/positions/`);
@@ -128,6 +174,14 @@ export default function OpenPositionsPage() {
     } else {
       router.push(`/select-office?position=${position.code}`);
     }
+  };
+
+  const handleOpenModal = (position: JobPosition) => {
+    setSelectedPosition(position);
+  };
+
+  const handleCloseModal = () => {
+    setSelectedPosition(null);
   };
 
   const containerMotion = {
@@ -272,65 +326,131 @@ export default function OpenPositionsPage() {
               animate="show"
               className="mt-10 grid gap-6 md:grid-cols-2 lg:grid-cols-3"
             >
-              {filteredPositions.map((position) => (
-                <motion.div
-                  key={position.id}
-                  variants={cardVariants}
-                  whileHover={shouldReduceMotion ? {} : { y: -6 }}
-                  transition={{ duration: 0.2, ease: "easeOut" }}
-                  className="flex h-full flex-col justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-teal-300/60 hover:shadow-md"
-                >
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3">
-                      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-teal-50">
-                        {getPositionIcon(position.code)}
-                      </span>
-                      <div>
-                        <h3 className="text-lg font-semibold text-slate-900">{position.name}</h3>
-                        {position.category_detail?.name && (
-                          <span className="mt-1 inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                            {position.category_detail.name}
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    <p className="text-sm text-slate-600">
-                      {position.description || "Join our team and start your initial interview."}
-                    </p>
-
-                    <div className="space-y-2">
-                      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Location</p>
-                      <div className="flex flex-wrap gap-2">
-                        {position.offices_detail && position.offices_detail.length > 0 ? (
-                          position.offices_detail.map((office) => (
-                            <span
-                              key={office.id}
-                              className="inline-flex items-center rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-700"
-                            >
-                              <MapPin className="mr-1 h-3 w-3" />
-                              {office.name}
-                            </span>
-                          ))
-                        ) : (
-                          <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
-                            Remote only
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => handleApply(position)}
-                    className="mt-6 inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-900"
+              {paginatedPositions.map((position, index) => {
+                const salaryDisplay = formatSalaryDisplay(position);
+                return (
+                  <motion.div
+                    key={position.id}
+                    variants={cardVariants}
+                    whileHover={shouldReduceMotion ? {} : { y: -6 }}
+                    transition={{ duration: 0.2, ease: "easeOut" }}
+                    onClick={() => {
+                      setFocusedIndex(index);
+                      cardRefs.current[index]?.focus();
+                      handleOpenModal(position);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.currentTarget !== event.target) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setFocusedIndex(index);
+                        handleOpenModal(position);
+                      }
+                    }}
+                    onFocus={() => setFocusedIndex(index)}
+                    role="button"
+                    tabIndex={0}
+                    ref={(el) => {
+                      cardRefs.current[index] = el;
+                    }}
+                    className={`flex h-full cursor-pointer flex-col justify-between rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:border-teal-300/60 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-teal-400/60 focus:ring-offset-2 focus:ring-offset-white ${
+                      focusedIndex === index ? "ring-2 ring-teal-300/60 ring-offset-2 ring-offset-white" : ""
+                    }`}
                   >
-                    Apply / Start Interview
-                    <ArrowRight className="h-4 w-4" />
-                  </button>
-                </motion.div>
-              ))}
+                    <div className="space-y-4">
+                      <div className="flex items-center gap-3">
+                        <span className="flex h-10 w-10 items-center justify-center rounded-full bg-teal-50">
+                          {getPositionIcon(position.code)}
+                        </span>
+                        <div>
+                          <h3 className="text-lg font-semibold text-slate-900">{position.name}</h3>
+                          {position.category_detail?.name && (
+                            <div className="mt-2 flex items-center gap-2">
+                              <span className="text-[10px] font-semibold uppercase tracking-[0.3em] text-slate-400">
+                                Category
+                              </span>
+                              <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                                {position.category_detail.name}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <p className="text-sm text-slate-600 line-clamp-3">
+                        {position.description || "Join our team and start your initial interview."}
+                      </p>
+
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Location</p>
+                        <div className="flex flex-wrap gap-2">
+                          {position.offices_detail && position.offices_detail.length > 0 ? (
+                            position.offices_detail.map((office) => (
+                              <span
+                                key={office.id}
+                                className="inline-flex items-center rounded-full bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-700"
+                              >
+                                <MapPin className="mr-1 h-3 w-3" />
+                                {office.name}
+                              </span>
+                            ))
+                          ) : (
+                            <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">
+                              Remote only
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      {salaryDisplay && (
+                        <div className="space-y-2">
+                          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">
+                            {salaryDisplay.label}
+                          </p>
+                          <p className="text-sm text-slate-600">{salaryDisplay.value}</p>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setFocusedIndex(index);
+                        cardRefs.current[index]?.focus();
+                        handleOpenModal(position);
+                      }}
+                      className="mt-6 inline-flex items-center justify-center gap-2 rounded-full bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-900"
+                    >
+                      Apply / Start Interview
+                      <ArrowRight className="h-4 w-4" />
+                    </button>
+                  </motion.div>
+                );
+              })}
             </motion.div>
+          )}
+
+          {filteredPositions.length > 0 && (
+            <div className="mt-10 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white px-6 py-4 text-sm text-slate-600">
+              <div className="font-semibold text-slate-700">
+                Page {currentPage} of {totalPages}
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                  className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Previous
+                </button>
+                <button
+                  onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                  className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           )}
 
           <div className="mt-10 rounded-2xl border border-slate-200 bg-slate-50 px-6 py-4 text-sm text-slate-600">
@@ -338,6 +458,13 @@ export default function OpenPositionsPage() {
           </div>
         </div>
       </section>
+
+      <PositionDetailModal
+        isOpen={!!selectedPosition}
+        position={selectedPosition}
+        onClose={handleCloseModal}
+        onApply={handleApply}
+      />
     </div>
   );
 }
