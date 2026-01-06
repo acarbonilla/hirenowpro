@@ -178,6 +178,8 @@ REST_FRAMEWORK = {
     'DEFAULT_THROTTLE_RATES': {
         'registration_hourly': '5/hour',
         'registration_daily': '10/day',
+        'login_ip': '10/min',
+        'login_user': '5/min',
     },
 }
 

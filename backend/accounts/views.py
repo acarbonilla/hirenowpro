@@ -11,7 +11,12 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.contrib.auth import logout
 from .models import User
-from common.throttles import RegistrationHourlyThrottle, RegistrationDailyThrottle
+from common.throttles import (
+    RegistrationHourlyThrottle,
+    RegistrationDailyThrottle,
+    LoginRateThrottle,
+    LoginUserRateThrottle,
+)
 from .serializers import (
     LoginSerializer, 
     UserSerializer, 
@@ -31,6 +36,7 @@ class LoginView(generics.GenericAPIView):
     serializer_class = LoginSerializer
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [LoginRateThrottle, LoginUserRateThrottle]
     
     allowed_roles = None  # allow any authenticated user by default
     
