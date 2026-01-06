@@ -46,6 +46,17 @@ type IntegrityMetadata = {
   captured_at?: string;
 };
 
+const TTS_CONFIG = {
+  voice_gender: "female",
+  voice_id: "",
+  language: "en-US",
+  rate: 0.92,
+  pitch: -0.3,
+  volume: 1.0,
+  sentence_pause_ms: 180,
+  prosody: "neutral",
+};
+
 // ─────────────────────
 // Utilities
 // ─────────────────────
@@ -117,6 +128,8 @@ export default function InterviewPage() {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [silenceStage, setSilenceStage] = useState(0);
   const [silenceDuration, setSilenceDuration] = useState(0);
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [micState, setMicState] = useState<"active" | "muted" | "blocked">("active");
   const [showIntegrityConsent, setShowIntegrityConsent] = useState(true);
   const [integrityConsentChecked, setIntegrityConsentChecked] = useState(false);
   const [integrityAcknowledged, setIntegrityAcknowledged] = useState(false);
@@ -127,7 +140,8 @@ export default function InterviewPage() {
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const audioDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
   const silenceRafRef = useRef<number | null>(null);
-  const silenceStartRef = useRef<number | null>(null);
+  const silenceElapsedRef = useRef(0);
+  const silenceLastTickRef = useRef<number | null>(null);
   const silenceStageRef = useRef(0);
   const currentQuestionIdRef = useRef<number | null>(null);
   const silenceStatsRef = useRef<Record<number, { silence_duration: number; prompt_stage: number }>>({});
@@ -162,6 +176,8 @@ export default function InterviewPage() {
   const focusLossStartRef = useRef<number | null>(null);
   const hadFullscreenRef = useRef(false);
   const fullscreenRequestedRef = useRef(false);
+  const micStateRef = useRef<"active" | "muted" | "blocked">("active");
+  const audioLevelRef = useRef(0);
 
   // ─────────────────────
   // Hook-safe Helpers
@@ -640,7 +656,10 @@ export default function InterviewPage() {
     }
     analyserRef.current = null;
     audioDataRef.current = null;
-    silenceStartRef.current = null;
+    silenceElapsedRef.current = 0;
+    silenceLastTickRef.current = null;
+    audioLevelRef.current = 0;
+    setAudioLevel(0);
   }, []);
 
   useEffect(() => {
@@ -648,53 +667,80 @@ export default function InterviewPage() {
   }, [stopSilenceDetection]);
 
   const startSilenceDetection = useCallback((stream: MediaStream) => {
-    if (audioContextRef.current || !stream.getAudioTracks().length) {
+    if (audioContextRef.current) {
       return;
     }
 
     try {
-      const AudioContextCtor =
-        window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextCtor) return;
+      if (stream.getAudioTracks().length) {
+        const AudioContextCtor =
+          window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (AudioContextCtor) {
+          const audioContext = new AudioContextCtor();
+          const analyser = audioContext.createAnalyser();
+          analyser.fftSize = 2048;
 
-      const audioContext = new AudioContextCtor();
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 2048;
+          const source = audioContext.createMediaStreamSource(stream);
+          source.connect(analyser);
 
-      const source = audioContext.createMediaStreamSource(stream);
-      source.connect(analyser);
+          const dataArray: Uint8Array<ArrayBuffer> = new Uint8Array(analyser.fftSize);
 
-      const dataArray: Uint8Array<ArrayBuffer> = new Uint8Array(analyser.fftSize);
+          audioContextRef.current = audioContext;
+          analyserRef.current = analyser;
+          audioSourceRef.current = source;
+          audioDataRef.current = dataArray;
+        }
+      }
 
-      audioContextRef.current = audioContext;
-      analyserRef.current = analyser;
-      audioSourceRef.current = source;
-      audioDataRef.current = dataArray;
-      silenceStartRef.current = null;
+      silenceElapsedRef.current = 0;
+      silenceLastTickRef.current = null;
       silenceStageRef.current = 0;
       noResponseTriggeredRef.current = false;
       setSilenceStage(0);
       setSilenceDuration(0);
+      setAudioLevel(0);
 
       const tick = () => {
-        if (!isRecordingRef.current || !analyserRef.current || !audioDataRef.current) {
+        if (!isRecordingRef.current) {
           return;
         }
 
-        analyserRef.current.getByteTimeDomainData(audioDataRef.current);
-        let sum = 0;
-        for (let i = 0; i < audioDataRef.current.length; i += 1) {
-          const normalized = (audioDataRef.current[i] - 128) / 128;
-          sum += normalized * normalized;
-        }
-        const rms = Math.sqrt(sum / audioDataRef.current.length);
         const now = performance.now();
+        const lastTick = silenceLastTickRef.current ?? now;
+        const deltaMs = Math.max(0, now - lastTick);
+        silenceLastTickRef.current = now;
 
-        if (rms < SILENCE_THRESHOLD) {
-          if (silenceStartRef.current === null) {
-            silenceStartRef.current = now;
+        const audioTrack = stream.getAudioTracks()[0];
+        const micMuted = !audioTrack || audioTrack.enabled === false;
+        let rms = 0;
+        let speaking = false;
+
+        if (!micMuted && analyserRef.current && audioDataRef.current) {
+          analyserRef.current.getByteTimeDomainData(audioDataRef.current);
+          let sum = 0;
+          for (let i = 0; i < audioDataRef.current.length; i += 1) {
+            const normalized = (audioDataRef.current[i] - 128) / 128;
+            sum += normalized * normalized;
           }
-          const silentMs = now - silenceStartRef.current;
+          rms = Math.sqrt(sum / audioDataRef.current.length);
+          speaking = rms >= SILENCE_THRESHOLD;
+        }
+        const nextAudioLevel = micMuted ? 0 : Math.min(100, Math.round((rms / 0.2) * 100));
+        if (nextAudioLevel !== audioLevelRef.current) {
+          audioLevelRef.current = nextAudioLevel;
+          setAudioLevel(nextAudioLevel);
+        }
+
+        const nextMicState: "active" | "muted" | "blocked" =
+          permissionState === "denied" ? "blocked" : micMuted ? "muted" : "active";
+        if (nextMicState !== micStateRef.current) {
+          micStateRef.current = nextMicState;
+          setMicState(nextMicState);
+        }
+
+        if (micMuted || !speaking) {
+          silenceElapsedRef.current += deltaMs;
+          const silentMs = silenceElapsedRef.current;
           const silentSeconds = Math.floor(silentMs / 1000);
 
           let stage = 0;
@@ -728,7 +774,8 @@ export default function InterviewPage() {
             setTimeout(() => stopRecordingRef.current(), 0);
           }
         } else {
-          silenceStartRef.current = null;
+          silenceElapsedRef.current = 0;
+          silenceLastTickRef.current = now;
           if (silenceStageRef.current !== 0) {
             silenceStageRef.current = 0;
             setSilenceStage(0);
@@ -745,7 +792,7 @@ export default function InterviewPage() {
     } catch (err) {
       console.warn("Silence detection unavailable", err);
     }
-  }, [silenceDuration, stopSilenceDetection]);
+  }, [permissionState, silenceDuration, stopSilenceDetection]);
 
   const startRecording = useCallback(() => {
     if (!webcamRef.current?.stream) {
@@ -815,31 +862,182 @@ export default function InterviewPage() {
     console.log("MediaRecorder started with state:", mediaRecorder.state);
   }, [handleDataAvailable, startSilenceDetection]);
 
-  // Text-to-speech function
-  const speakQuestion = useCallback((text: string, questionId?: number) => {
-    if (!text) return;
+  const ttsVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
+  const ttsSessionRef = useRef(0);
 
-    // Cancel any ongoing speech
-    window.speechSynthesis.cancel();
+  const resolveFemaleVoice = useCallback(() => {
+    if (typeof window === "undefined" || ttsVoiceRef.current) return;
+    if (!("speechSynthesis" in window)) return;
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.9; // Slightly slower for clarity
-    utterance.pitch = 1;
-    utterance.volume = 1;
     const voices = window.speechSynthesis.getVoices();
-    const femaleVoice = voices.find((voice) => /female|woman|wavenet[- ]?f/i.test(voice.name));
-    if (femaleVoice) {
-      utterance.voice = femaleVoice;
-    } else if (voices[0]) {
-      utterance.voice = voices[0];
+    if (!voices.length) return;
+
+    const femaleKeywords = [
+      "female",
+      "woman",
+      "zira",
+      "susan",
+      "samantha",
+      "victoria",
+      "karen",
+      "moira",
+      "tessa",
+      "fiona",
+      "joanna",
+      "ivy",
+      "emma",
+      "ava",
+      "allison",
+      "olivia",
+      "catherine",
+      "wavenet-f",
+      "neural-f",
+    ];
+    const maleKeywords = [
+      "male",
+      "man",
+      "david",
+      "mark",
+      "john",
+      "alex",
+      "daniel",
+      "fred",
+      "tom",
+      "peter",
+      "james",
+      "george",
+      "arthur",
+      "bruce",
+      "roger",
+      "steve",
+      "microsoft david",
+      "microsoft mark",
+    ];
+
+    const hasKeyword = (voice: SpeechSynthesisVoice, keywords: string[]) => {
+      const haystack = `${voice.name} ${voice.voiceURI}`.toLowerCase();
+      return keywords.some((keyword) => haystack.includes(keyword));
+    };
+
+    const matchesLanguage = (voice: SpeechSynthesisVoice) =>
+      voice.lang?.toLowerCase().startsWith(TTS_CONFIG.language.toLowerCase());
+
+    const sortByName = (a: SpeechSynthesisVoice, b: SpeechSynthesisVoice) => a.name.localeCompare(b.name);
+
+    const femaleLang = voices.filter((voice) => matchesLanguage(voice) && hasKeyword(voice, femaleKeywords));
+    if (femaleLang.length) {
+      ttsVoiceRef.current = femaleLang.sort(sortByName)[0];
+      return;
     }
 
-    utterance.onstart = () => setIsSpeaking(true);
-    utterance.onend = () => {
-      setIsSpeaking(false);
-      // Auto-start recording after voice finishes (1 second delay)
-        setTimeout(() => {
-        // Get the question ID to check - use parameter if provided, otherwise current question
+    const femaleAny = voices.filter((voice) => hasKeyword(voice, femaleKeywords));
+    if (femaleAny.length) {
+      ttsVoiceRef.current = femaleAny.sort(sortByName)[0];
+      return;
+    }
+
+    const neutralLang = voices.filter((voice) => matchesLanguage(voice) && !hasKeyword(voice, maleKeywords));
+    if (neutralLang.length) {
+      ttsVoiceRef.current = neutralLang.sort(sortByName)[0];
+      return;
+    }
+
+    const neutralAny = voices.filter((voice) => !hasKeyword(voice, maleKeywords));
+    if (neutralAny.length) {
+      ttsVoiceRef.current = neutralAny.sort(sortByName)[0];
+      return;
+    }
+
+    console.warn("Female TTS voice unavailable; default voice may not meet gender requirement.");
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    resolveFemaleVoice();
+    const handleVoicesChanged = () => resolveFemaleVoice();
+    window.speechSynthesis.addEventListener("voiceschanged", handleVoicesChanged);
+    return () => {
+      window.speechSynthesis.removeEventListener("voiceschanged", handleVoicesChanged);
+    };
+  }, [resolveFemaleVoice]);
+
+  const speak = useCallback(
+    (text: string, handlers?: { onEnd?: () => void }) => {
+      if (!text || typeof window === "undefined" || !("speechSynthesis" in window)) return false;
+
+      const selectedVoice = ttsVoiceRef.current;
+      let voiceToUse = selectedVoice;
+      if (!voiceToUse) {
+        resolveFemaleVoice();
+        if (ttsVoiceRef.current) {
+          voiceToUse = ttsVoiceRef.current;
+        }
+      }
+      if (!voiceToUse) {
+        return false;
+      }
+
+      const segments =
+        text.match(/[^.!?]+[.!?]*/g)?.map((segment) => segment.trim()).filter(Boolean) ?? [text.trim()];
+
+      if (!segments.length) {
+        return false;
+      }
+
+      ttsSessionRef.current += 1;
+      const sessionId = ttsSessionRef.current;
+      window.speechSynthesis.cancel();
+
+      let index = 0;
+      const speakSegment = () => {
+        if (sessionId !== ttsSessionRef.current) return;
+        if (index >= segments.length) {
+          setIsSpeaking(false);
+          handlers?.onEnd?.();
+          return;
+        }
+
+        const utterance = new SpeechSynthesisUtterance(segments[index]);
+        utterance.lang = TTS_CONFIG.language;
+        utterance.rate = TTS_CONFIG.rate;
+        utterance.pitch = TTS_CONFIG.pitch;
+        utterance.volume = TTS_CONFIG.volume;
+        utterance.voice = voiceToUse;
+        utterance.onstart = () => {
+          if (index === 0) {
+            setIsSpeaking(true);
+          }
+        };
+        utterance.onend = () => {
+          if (sessionId !== ttsSessionRef.current) return;
+          index += 1;
+          if (index >= segments.length) {
+            setIsSpeaking(false);
+            handlers?.onEnd?.();
+            return;
+          }
+          setTimeout(speakSegment, TTS_CONFIG.sentence_pause_ms);
+        };
+        utterance.onerror = () => {
+          if (sessionId !== ttsSessionRef.current) return;
+          setIsSpeaking(false);
+        };
+
+        window.speechSynthesis.speak(utterance);
+      };
+
+      speakSegment();
+      return true;
+    },
+    [resolveFemaleVoice]
+  );
+
+  // Text-to-speech function
+  const speakQuestion = useCallback(
+    (text: string, questionId?: number) => {
+      if (!text) return;
+
+      const handleAutoStart = () => {
         const qId = questionId || questions[currentQuestionIndex]?.id;
         const alreadyRecorded = qId && answeredQuestions.has(qId);
 
@@ -857,12 +1055,19 @@ export default function InterviewPage() {
         } else {
           console.log("Skipping auto-record:", { cameraReady, isRecording, alreadyRecorded });
         }
-      }, 1000);
-    };
-    utterance.onerror = () => setIsSpeaking(false);
+      };
 
-    window.speechSynthesis.speak(utterance);
-  }, [questions, currentQuestionIndex, answeredQuestions, cameraReady, isRecording, startRecording]);
+      const didSpeak = speak(text, {
+        onEnd: () => {
+          setTimeout(handleAutoStart, 1000);
+        },
+      });
+      if (!didSpeak) {
+        setTimeout(handleAutoStart, 500);
+      }
+    },
+    [answeredQuestions, cameraReady, currentQuestionIndex, isRecording, questions, speak, startRecording]
+  );
 
   // Speak question when it changes
   useEffect(() => {
@@ -883,7 +1088,8 @@ export default function InterviewPage() {
   useEffect(() => {
     const currentQuestion = questions[currentQuestionIndex];
     currentQuestionIdRef.current = currentQuestion ? currentQuestion.id : null;
-    silenceStartRef.current = null;
+    silenceElapsedRef.current = 0;
+    silenceLastTickRef.current = null;
     silenceStageRef.current = 0;
     noResponseTriggeredRef.current = false;
     setSilenceStage(0);
@@ -915,14 +1121,22 @@ export default function InterviewPage() {
   }, [stopRecording]);
 
   const handleSilenceStartAnswer = () => {
-    silenceStartRef.current = performance.now();
+    silenceElapsedRef.current = 0;
+    silenceLastTickRef.current = performance.now();
     silenceStageRef.current = 0;
+    noResponseTriggeredRef.current = false;
     setSilenceStage(0);
     setSilenceDuration(0);
   };
 
   const handleSilenceRepeatQuestion = () => {
     setSuccessMessage("The question is displayed above. Take your time.");
+    silenceElapsedRef.current = 0;
+    silenceLastTickRef.current = performance.now();
+    silenceStageRef.current = 0;
+    noResponseTriggeredRef.current = false;
+    setSilenceStage(0);
+    setSilenceDuration(0);
   };
 
   const handleSilenceSkip = () => {
@@ -1172,6 +1386,13 @@ export default function InterviewPage() {
   const currentQuestion = questions[currentQuestionIndex];
   const isQuestionAnswered = currentQuestion ? answeredQuestions.has(currentQuestion.id) : false;
   const allQuestionsAnswered = questions.length > 0 && answeredQuestions.size === questions.length;
+  const micStateLabel =
+    micState === "blocked" ? "Permission blocked" : micState === "muted" ? "Muted" : "Active";
+  const micStateClass =
+    micState === "blocked" ? "text-red-700" : micState === "muted" ? "text-yellow-700" : "text-green-700";
+  const micBarClass =
+    micState === "blocked" ? "bg-red-500" : micState === "muted" ? "bg-yellow-500" : "bg-green-500";
+  const audioLevelWidth = `${Math.min(100, Math.max(0, audioLevel))}%`;
 
   return (
     <div ref={interviewContainerRef} className="min-h-screen bg-gray-50 py-8 px-4 relative">
@@ -1561,6 +1782,21 @@ export default function InterviewPage() {
                   {deviceWarning}
                 </div>
               )}
+              <div className="rounded-lg border border-gray-200 bg-white p-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs text-gray-500">Microphone</p>
+                    <p className={`text-sm font-semibold ${micStateClass}`}>{micStateLabel}</p>
+                  </div>
+                  <span className="text-xs text-gray-500">Audio level</span>
+                </div>
+                <div className="mt-2 h-2 w-full rounded-full bg-gray-200 overflow-hidden">
+                  <div
+                    className={`${micBarClass} h-2 rounded-full transition-all duration-150`}
+                    style={{ width: audioLevelWidth }}
+                  />
+                </div>
+              </div>
               {/* Status Display */}
               {isSpeaking && (
                 <div className="w-full bg-blue-100 border border-blue-300 text-blue-800 py-3 rounded-lg font-semibold flex items-center justify-center">

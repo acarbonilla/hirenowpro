@@ -18,6 +18,67 @@ function formatDurationSeconds(seconds?: number | null): string {
   return minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function normalizeScriptStatus(status?: string | null) {
+  const value = (status || "").toLowerCase();
+  if (value === "clear" || value === "clean") return "clear";
+  if (value === "suspicious") return "suspicious";
+  if (value === "high_risk" || value === "high-risk") return "high_risk";
+  if (value === "error") return "error";
+  return "unknown";
+}
+
+function getScriptStatusLabel(status?: string | null) {
+  const normalized = normalizeScriptStatus(status);
+  if (normalized == "clear") return "No script indicators";
+  if (normalized == "suspicious") return "Possible script use";
+  if (normalized == "high_risk") return "Possible script use";
+  if (normalized == "error") return "Unable to assess";
+  return "Not assessed";
+}
+
+function getScriptStatusClass(status?: string | null) {
+  const normalized = normalizeScriptStatus(status);
+  if (normalized == "clear") return "bg-green-100 text-green-800";
+  if (normalized == "suspicious") return "bg-yellow-100 text-yellow-800";
+  if (normalized == "high_risk") return "bg-red-100 text-red-800";
+  if (normalized == "error") return "bg-gray-100 text-gray-700";
+  return "bg-gray-100 text-gray-700";
+}
+
+function getScriptSummary(status?: string | null) {
+  const normalized = normalizeScriptStatus(status);
+  if (normalized == "clear") return "No indicators";
+  if (normalized == "suspicious") return "Review suggested";
+  if (normalized == "high_risk") return "Review suggested";
+  if (normalized == "error") return "Not available (insufficient visual signal)";
+  return "Not assessed";
+}
+
+function formatMetric(value: unknown, suffix = "") {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    const rounded = Number.isInteger(value) ? value : round(value, 1);
+    return `${rounded}${suffix}`;
+  }
+  if (typeof value === "string" && value.trim()) {
+    return `${value}${suffix}`;
+  }
+  return "N/A";
+}
+
+function round(value: number, precision = 1) {
+  const factor = 10 ** precision;
+  return Math.round(value * factor) / factor;
+}
+
+function hasNoFaceFlag(data?: Record<string, any> | null) {
+  if (!data || !Array.isArray(data.flags)) return false;
+  return data.flags.some((flag: string) => flag.toLowerCase().includes("no face detected"));
+}
+
 // TYPES --------------------------------------------------------------
 
 interface Question {
@@ -45,6 +106,14 @@ interface VideoResponse {
   hr_override_score?: number;
   hr_comments?: string;
   status: string;
+  script_reading_status?: string | null;
+  script_reading_data?: Record<string, any> | null;
+  answer_integrity?: {
+    answer_type?: "normal" | "no_response" | "content_free" | "repetition_only";
+    silence_triggered?: boolean;
+    integrity_note?: string | null;
+    transcript_length?: number;
+  };
 }
 
 interface IntegrityMetadata {
@@ -124,6 +193,7 @@ export default function ReviewPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [showAIScoring, setShowAIScoring] = useState(false);
+  const [scriptDetailsOpen, setScriptDetailsOpen] = useState<Record<number, boolean>>({});
 
   const [overrideForm, setOverrideForm] = useState({
     score: "",
@@ -489,13 +559,15 @@ export default function ReviewPage() {
   const emailSent = !!reviewData.email_sent;
   const canSendEmail = isDecisionFinal && !emailSent && !emailSending;
   const integrity = reviewData.integrity_metadata;
-  const hasIntegrity = !!integrity && Object.keys(integrity).length > 0;
-  const fullscreenExits = integrity?.fullscreen?.exit_count ?? 0;
-  const focusLosses = integrity?.focus?.blur_count ?? 0;
-  const focusLossTime = formatDurationSeconds(integrity?.focus?.total_blur_seconds ?? 0);
-  const tabSwitches = integrity?.tab_switches?.count ?? 0;
-  const refreshCount = integrity?.refresh?.count ?? 0;
+  const hasFullscreenExits = isFiniteNumber(integrity?.fullscreen?.exit_count);
+  const hasFocusLosses = isFiniteNumber(integrity?.focus?.blur_count);
+  const hasFocusDuration = isFiniteNumber(integrity?.focus?.total_blur_seconds);
+  const hasTabSwitches = isFiniteNumber(integrity?.tab_switches?.count);
+  const hasRefreshCount = isFiniteNumber(integrity?.refresh?.count);
   const capturedAt = integrity?.last_updated_at || integrity?.captured_at || null;
+  const hasCapturedAt = typeof capturedAt === "string" && capturedAt.trim().length > 0;
+  const showIntegrityGrid =
+    hasFullscreenExits || hasFocusLosses || hasFocusDuration || hasTabSwitches || hasRefreshCount || hasCapturedAt;
 
   const openDecisionModal = () => {
     if (!canFinalize) return;
@@ -514,6 +586,12 @@ export default function ReviewPage() {
           : "bg-gray-100 text-gray-600";
   const decisionTypeLabel =
     decisionType === "hire" ? "Hire" : decisionType === "reject" ? "Reject" : decisionType === "hold" ? "Hold" : "";
+  const answerIntegrity = selectedVideo?.answer_integrity;
+  const allowedIntegrityNotes = new Set(["No transcript available", "Review suggested"]);
+  const answerIntegrityNote =
+    answerIntegrity?.integrity_note && allowedIntegrityNotes.has(answerIntegrity.integrity_note)
+      ? answerIntegrity.integrity_note
+      : null;
 
   // UI START --------------------------------------------------------------
 
@@ -595,31 +673,45 @@ export default function ReviewPage() {
             </span>
           )}
         </div>
-        {hasIntegrity ? (
+        {showIntegrityGrid && (
           <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-            <div className="rounded-lg border border-gray-200 p-3">
-              <p className="text-xs text-gray-500">Fullscreen exits</p>
-              <p className="text-lg font-semibold text-gray-900">{fullscreenExits}</p>
-            </div>
-            <div className="rounded-lg border border-gray-200 p-3">
-              <p className="text-xs text-gray-500">Focus losses</p>
-              <p className="text-lg font-semibold text-gray-900">{focusLosses}</p>
-              <p className="text-xs text-gray-500">{focusLossTime} out of focus</p>
-            </div>
-            <div className="rounded-lg border border-gray-200 p-3">
-              <p className="text-xs text-gray-500">Tab switches</p>
-              <p className="text-lg font-semibold text-gray-900">{tabSwitches}</p>
-              <p className="text-xs text-gray-500">Refreshes: {refreshCount}</p>
-            </div>
-            <div className="rounded-lg border border-gray-200 p-3">
-              <p className="text-xs text-gray-500">Captured at</p>
-              <p className="text-sm text-gray-700">
-                {capturedAt ? new Date(capturedAt).toLocaleString() : "Not recorded"}
-              </p>
-            </div>
+            {hasFullscreenExits && (
+              <div className="rounded-lg border border-gray-200 p-3">
+                <p className="text-xs text-gray-500">Fullscreen exits</p>
+                <p className="text-lg font-semibold text-gray-900">{integrity?.fullscreen?.exit_count}</p>
+              </div>
+            )}
+            {(hasFocusLosses || hasFocusDuration) && (
+              <div className="rounded-lg border border-gray-200 p-3">
+                <p className="text-xs text-gray-500">Focus losses</p>
+                {hasFocusLosses && (
+                  <p className="text-lg font-semibold text-gray-900">{integrity?.focus?.blur_count}</p>
+                )}
+                {hasFocusDuration && (
+                  <p className="text-xs text-gray-500">
+                    {formatDurationSeconds(integrity?.focus?.total_blur_seconds)} out of focus
+                  </p>
+                )}
+              </div>
+            )}
+            {(hasTabSwitches || hasRefreshCount) && (
+              <div className="rounded-lg border border-gray-200 p-3">
+                <p className="text-xs text-gray-500">Tab switches</p>
+                {hasTabSwitches && (
+                  <p className="text-lg font-semibold text-gray-900">{integrity?.tab_switches?.count}</p>
+                )}
+                {hasRefreshCount && (
+                  <p className="text-xs text-gray-500">Refreshes: {integrity?.refresh?.count}</p>
+                )}
+              </div>
+            )}
+            {hasCapturedAt && (
+              <div className="rounded-lg border border-gray-200 p-3">
+                <p className="text-xs text-gray-500">Captured at</p>
+                <p className="text-sm text-gray-700">{new Date(capturedAt).toLocaleString()}</p>
+              </div>
+            )}
           </div>
-        ) : (
-          <p className="mt-4 text-sm text-gray-500">No integrity metadata recorded for this interview.</p>
         )}
       </div>
 
@@ -727,13 +819,145 @@ export default function ReviewPage() {
               <div className="bg-white p-6 shadow border rounded-xl">
                 <h3 className="text-lg font-semibold mb-4">Transcript</h3>
                 <div className="bg-gray-50 p-4 rounded-lg max-h-60 overflow-y-auto text-gray-800 whitespace-pre-wrap">
-                  {selectedVideo.transcript || "No transcript available."}
+                  {selectedVideo.transcript || "No transcript available"}
                 </div>
+              </div>
+
+              {/* Authenticity / Script Check */}
+              <div className="bg-white p-6 shadow border rounded-xl">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-lg font-semibold">Authenticity / Script Check</h3>
+                    <p className="text-xs text-gray-500 mt-1">
+                      AI signal for possible script reading. It does not auto-fail a candidate.
+                    </p>
+                  </div>
+                  <span
+                    className={[
+                      "inline-flex items-center px-2 py-1 rounded-full text-xs font-semibold",
+                      getScriptStatusClass(selectedVideo.script_reading_status),
+                    ].join(" ")}
+                  >
+                    {getScriptStatusLabel(selectedVideo.script_reading_status)}
+                  </span>
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-600">
+                  <span className="font-medium text-gray-700">Script reading assessment:</span>
+                  <span className="px-2 py-1 rounded-full bg-gray-100 text-gray-700 text-xs font-semibold">
+                    {getScriptSummary(selectedVideo.script_reading_status)}
+                  </span>
+                </div>
+
+                <div className="mt-4">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setScriptDetailsOpen((prev) => ({
+                        ...prev,
+                        [selectedVideo.id]: !prev[selectedVideo.id],
+                      }))
+                    }
+                    className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+                  >
+                    {scriptDetailsOpen[selectedVideo.id] ? "Hide details" : "Show details"}
+                  </button>
+                </div>
+
+                {scriptDetailsOpen[selectedVideo.id] && (
+                  <div className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-4">
+                    {hasNoFaceFlag(selectedVideo.script_reading_data) && (
+                      <div className="bg-white border border-gray-200 rounded-lg p-4">
+                        <p className="text-sm font-semibold text-gray-800">Why this assessment is unavailable</p>
+                        <ul className="mt-2 text-sm text-gray-700 list-disc list-inside space-y-1">
+                          <li>The system could not clearly detect the applicant's face.</li>
+                          <li>Common causes include camera angle, lighting, or temporary obstruction.</li>
+                          <li>This does NOT automatically disqualify the applicant.</li>
+                        </ul>
+                      </div>
+                    )}
+                    {selectedVideo.script_reading_data ? (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm text-gray-700">
+                          <div className="flex items-center justify-between">
+                            <span>Gaze at camera</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.gaze_at_camera_percent, "%")}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Gaze left</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.gaze_left_percent, "%")}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Gaze right</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.gaze_right_percent, "%")}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Gaze up</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.gaze_up_percent, "%")}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Gaze down</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.gaze_down_percent, "%")}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Horizontal scanning/min</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.horizontal_scanning_per_minute)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Primary off-camera direction</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.primary_off_camera_direction)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span>Confidence</span>
+                            <span className="font-semibold">
+                              {formatMetric(selectedVideo.script_reading_data?.confidence, "%")}
+                            </span>
+                          </div>
+                        </div>
+
+                        {Array.isArray(selectedVideo.script_reading_data?.flags) &&
+                        selectedVideo.script_reading_data?.flags.length > 0 ? (
+                          <div>
+                            <p className="text-sm font-semibold text-gray-700 mb-2">Technical details</p>
+                            <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                              {selectedVideo.script_reading_data.flags.map((flag: string, index: number) => (
+                                <li key={index}>{flag}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : (
+                          <p className="text-sm text-gray-500">No flags recorded.</p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-sm text-gray-500">No script detection details available for this response.</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* AI ANALYSIS */}
               <div className="bg-white p-6 shadow border rounded-xl">
                 <h3 className="text-lg font-semibold mb-4">AI Analysis</h3>
+                {answerIntegrityNote && (
+                  <div className="mb-3 inline-flex rounded-full bg-gray-100 px-3 py-1 text-xs font-semibold text-gray-700">
+                    {answerIntegrityNote}
+                  </div>
+                )}
                 <div className="bg-gray-50 p-4 rounded-lg text-gray-800 whitespace-pre-wrap space-y-3">
                   {selectedVideo.ai_assessment?.trim()
                     ? selectedVideo.ai_assessment

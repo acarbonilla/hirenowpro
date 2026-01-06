@@ -31,6 +31,64 @@ class InterviewReviewDetails(APIView):
 
         videos_payload = []
         scores_by_competency = {}
+
+        def build_answer_integrity(video_response, ai_analysis):
+            transcript_text = (getattr(video_response, "transcript", "") or "").strip()
+            transcript_length = len(transcript_text)
+            raw_scores = {}
+            if ai_analysis and isinstance(getattr(ai_analysis, "langchain_analysis_data", None), dict):
+                analysis_data = ai_analysis.langchain_analysis_data or {}
+                raw_scores = analysis_data.get("raw_scores", {}) if isinstance(analysis_data, dict) else {}
+                if not isinstance(raw_scores, dict):
+                    raw_scores = {}
+
+            def get_bool_flag(*keys):
+                for key in keys:
+                    value = raw_scores.get(key)
+                    if isinstance(value, bool):
+                        return value
+                return False
+
+            no_response = (
+                get_bool_flag("no_response", "noResponse", "no_answer")
+                or raw_scores.get("technical_issue") is True
+                or raw_scores.get("issue_type") == "no_audio"
+                or transcript_length == 0
+            )
+            silence_triggered = get_bool_flag("silence_exceeded", "silenceExceeded", "silence_triggered")
+            repetition_only = get_bool_flag(
+                "repetition_only", "repetitionDetected", "repetition_detected", "repetition_only_response"
+            )
+            content_relevance_score = getattr(ai_analysis, "content_relevance_score", None) if ai_analysis else None
+            content_free = False
+            if content_relevance_score is not None:
+                try:
+                    content_free = float(content_relevance_score) < 40
+                except (TypeError, ValueError):
+                    content_free = False
+
+            if no_response:
+                answer_type = "no_response"
+            elif repetition_only:
+                answer_type = "repetition_only"
+            elif content_free:
+                answer_type = "content_free"
+            else:
+                answer_type = "normal"
+
+            integrity_note = ""
+            if answer_type == "no_response":
+                integrity_note = "No transcript available"
+            elif answer_type in {"repetition_only", "content_free"} or silence_triggered:
+                integrity_note = "Review suggested"
+
+            return {
+                "answer_type": answer_type,
+                "silence_triggered": bool(silence_triggered),
+                "integrity_note": integrity_note or None,
+                "transcript_length": transcript_length,
+            }
+
         for vr in video_responses:
             ai_assessment = ""
             ai_scoring = {
@@ -69,9 +127,12 @@ class InterviewReviewDetails(APIView):
                     "ai_assessment": ai_assessment,
                     "ai_scoring": ai_scoring,
                     "sentiment": vr.sentiment or "",
+                    "script_reading_status": vr.script_reading_status,
+                    "script_reading_data": vr.script_reading_data,
                     "hr_override_score": vr.hr_override_score,
                     "hr_comments": vr.hr_comments,
                     "status": vr.status if hasattr(vr, "status") else "completed",
+                    "answer_integrity": build_answer_integrity(vr, getattr(vr, "ai_analysis", None)),
                 }
             )
             score = vr.final_score
