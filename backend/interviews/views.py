@@ -37,6 +37,12 @@ from .question_selection import select_questions_for_interview, select_questions
 from notifications.tasks import send_applicant_email_task
 
 
+
+def _debug_print(*args, **kwargs):
+    if settings.DEBUG:
+        print(*args, **kwargs)
+
+
 class JobCategoryViewSet(viewsets.ModelViewSet):
     """
     ViewSet for Job Categories
@@ -244,7 +250,7 @@ class InterviewQuestionViewSet(viewsets.ModelViewSet):
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
-            print("QUESTION CREATE ERRORS:", serializer.errors)
+            _debug_print("QUESTION CREATE ERRORS:", serializer.errors)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         question = serializer.save()
         read_serializer = InterviewQuestionSerializer(question)
@@ -255,7 +261,7 @@ class InterviewQuestionViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         serializer = self.get_serializer(instance, data=request.data, partial=partial)
         if not serializer.is_valid():
-            print("QUESTION UPDATE ERRORS:", serializer.errors)
+            _debug_print("QUESTION UPDATE ERRORS:", serializer.errors)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         question = serializer.save()
         read_serializer = InterviewQuestionSerializer(question)
@@ -350,13 +356,13 @@ class InterviewViewSet(viewsets.ModelViewSet):
     
     def create(self, request, *args, **kwargs):
         """Create new interview"""
-        print("DEBUG_INTERVIEW_CREATE_PAYLOAD:", request.data)
+        _debug_print("DEBUG_INTERVIEW_CREATE_PAYLOAD:", request.data)
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
-            print("DEBUG_INTERVIEW_ERRORS:", serializer.errors)
+            _debug_print("DEBUG_INTERVIEW_ERRORS:", serializer.errors)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         interview = serializer.save()
-        print("DEBUG_INTERVIEW_CREATED:", interview.id, interview.position_type_id)
+        _debug_print("DEBUG_INTERVIEW_CREATED:", interview.id, interview.position_type_id)
 
         if interview.position_type_id:
             try:
@@ -395,11 +401,11 @@ class InterviewViewSet(viewsets.ModelViewSet):
         """
         interview = self.get_object()
         
-        print(f"\n=== VIDEO UPLOAD REQUEST ===")
-        print(f"Interview ID: {interview.id}")
-        print(f"Interview Status: {interview.status}")
-        print(f"Request Data: {request.data}")
-        print(f"Request Files: {request.FILES}")
+        _debug_print(f"\n=== VIDEO UPLOAD REQUEST ===")
+        _debug_print(f"Interview ID: {interview.id}")
+        _debug_print(f"Interview Status: {interview.status}")
+        _debug_print(f"Request Data: {request.data}")
+        _debug_print(f"Request Files: {request.FILES}")
         
         # Check if interview is in valid state
         if interview.status in ['submitted', 'processing', 'completed']:
@@ -416,7 +422,7 @@ class InterviewViewSet(viewsets.ModelViewSet):
         # Create video response
         serializer = VideoResponseCreateSerializer(data=request.data)
         if not serializer.is_valid():
-            print(f"Serializer validation failed: {serializer.errors}")
+            _debug_print(f"Serializer validation failed: {serializer.errors}")
             return Response(
                 {'error': 'Invalid data', 'details': serializer.errors},
                 status=status.HTTP_400_BAD_REQUEST
@@ -464,7 +470,7 @@ class InterviewViewSet(viewsets.ModelViewSet):
         try:
             from .deepgram_service import get_deepgram_service
             
-            print(f"🎤 Starting Deepgram transcription for video {video_response.id}...")
+            _debug_print(f"🎤 Starting Deepgram transcription for video {video_response.id}...")
             deepgram_service = get_deepgram_service()
             
             # Transcribe video to text
@@ -478,11 +484,11 @@ class InterviewViewSet(viewsets.ModelViewSet):
             video_response.status = 'uploaded'  # Still uploaded, not analyzed yet
             video_response.save()
             
-            print(f"✅ Transcript stored: {len(transcript_data['transcript'])} chars")
+            _debug_print(f"✅ Transcript stored: {len(transcript_data['transcript'])} chars")
             
         except Exception as transcription_error:
             # Log error but don't fail the upload
-            print(f"⚠️ Transcription failed (will retry on submit): {transcription_error}")
+            _debug_print(f"⚠️ Transcription failed (will retry on submit): {transcription_error}")
             video_response.transcript = ""  # Empty transcript, will be handled on submit
             video_response.save()
         
@@ -775,18 +781,18 @@ class InterviewViewSet(viewsets.ModelViewSet):
         """
         interview = self.get_object()
         
-        print(f"\n=== INTERVIEW SUBMISSION REQUEST ===")
-        print(f"Interview ID: {interview.id}")
-        print(f"Interview Status: {interview.status}")
-        print(f"Position Type: {interview.position_type}")
+        _debug_print(f"\n=== INTERVIEW SUBMISSION REQUEST ===")
+        _debug_print(f"Interview ID: {interview.id}")
+        _debug_print(f"Interview Status: {interview.status}")
+        _debug_print(f"Position Type: {interview.position_type}")
         
         # Get total responses
         total_responses = interview.video_responses.count()
-        print(f"Total video responses: {total_responses}")
+        _debug_print(f"Total video responses: {total_responses}")
         
         # Validate we have at least some responses
         if total_responses == 0:
-            print(f"❌ Validation failed: No questions answered")
+            _debug_print(f"❌ Validation failed: No questions answered")
             return Response({
                 'error': 'No questions have been answered',
                 'answered': 0
@@ -794,17 +800,17 @@ class InterviewViewSet(viewsets.ModelViewSet):
         
         # Get the question IDs that were answered
         answered_question_ids = list(interview.video_responses.values_list('question_id', flat=True))
-        print(f"Answered question IDs: {answered_question_ids}")
+        _debug_print(f"Answered question IDs: {answered_question_ids}")
         
         # Check if all answered questions are valid and active
         valid_questions = InterviewQuestion.objects.filter(
             id__in=answered_question_ids,
             is_active=True
         ).count()
-        print(f"Valid questions: {valid_questions} of {total_responses}")
+        _debug_print(f"Valid questions: {valid_questions} of {total_responses}")
         
         if valid_questions != total_responses:
-            print(f"❌ Validation failed: Some invalid questions")
+            _debug_print(f"❌ Validation failed: Some invalid questions")
             return Response({
                 'error': 'Some responses are for invalid questions',
                 'answered': total_responses,
@@ -815,9 +821,9 @@ class InterviewViewSet(viewsets.ModelViewSet):
         MINIMUM_QUESTIONS_REQUIRED = 5
         
         if interview.position_type:
-            print(f"Checking minimum questions: {total_responses} >= {MINIMUM_QUESTIONS_REQUIRED}?")
+            _debug_print(f"Checking minimum questions: {total_responses} >= {MINIMUM_QUESTIONS_REQUIRED}?")
             if total_responses < MINIMUM_QUESTIONS_REQUIRED:
-                print(f"❌ Validation failed: Not enough questions answered")
+                _debug_print(f"❌ Validation failed: Not enough questions answered")
                 # Use the related PositionType name instead of a non-existent
                 # get_position_type_display helper on Interview.
                 position_name = getattr(interview.position_type, "name", None) or "Unknown position"
@@ -828,7 +834,7 @@ class InterviewViewSet(viewsets.ModelViewSet):
                     'position': position_name
                 }, status=status.HTTP_400_BAD_REQUEST)
         
-        print(f"✅ All validations passed!")
+        _debug_print(f"✅ All validations passed!")
         
         # Mark interview as submitted and start processing
         from django.utils import timezone
@@ -858,11 +864,11 @@ class InterviewViewSet(viewsets.ModelViewSet):
 
             def queue_celery_task():
                 analyze_interview.delay(interview.id)
-                print(f"Celery task queued for interview {interview.id}")
+                _debug_print(f"Celery task queued for interview {interview.id}")
 
             transaction.on_commit(queue_celery_task)
         except Exception as e:
-            print(f"Non-fatal: failed to queue analysis task for interview {interview.id}: {e}")
+            _debug_print(f"Non-fatal: failed to queue analysis task for interview {interview.id}: {e}")
 
         return Response({
             'message': 'Interview submitted successfully. AI analysis in progress.',

@@ -14,6 +14,12 @@ const PROGRESS_STEPS = [
   { label: "Interview", state: "upcoming" },
 ] as const;
 
+const logDebug = (...args: unknown[]) => {
+  if (process.env.NODE_ENV !== "production") {
+    console.log(...args);
+  }
+};
+
 function ProgressIndicator() {
   return (
     <div className="flex flex-wrap items-center gap-3 text-[11px] font-semibold uppercase tracking-[0.3em] text-slate-400">
@@ -242,7 +248,7 @@ function RegisterPageContent() {
         office_id: officeId,
       };
 
-      console.log("Sending registration data:", registrationData);
+      logDebug("Sending registration data:", registrationData);
 
       const applicantResponse = await applicantAPI.register(registrationData);
       const applicant = applicantResponse.data.applicant || applicantResponse.data;
@@ -276,11 +282,11 @@ function RegisterPageContent() {
           position_code: positionCode,
           interview_type: "initial_ai",
         };
-        console.log("DEBUG finalPayload:", finalPayload);
+        logDebug("DEBUG finalPayload:", finalPayload);
 
         const interviewResponse = await interviewAPI.createInterview(finalPayload);
 
-        console.log("DEBUG interviewResponse:", interviewResponse);
+        logDebug("DEBUG interviewResponse:", interviewResponse);
 
         const interviewPayload = interviewResponse.data?.interview || interviewResponse.data;
         const interviewId = interviewPayload?.id || interviewResponse.data?.id;
@@ -301,7 +307,7 @@ function RegisterPageContent() {
           return;
         }
 
-        console.log("Redirecting to interview:", interviewId);
+        logDebug("Redirecting to interview:", interviewId);
         clearResumeIntent();
         router.push(`/interview/${interviewId}`);
         return;

@@ -203,10 +203,14 @@ SIMPLE_JWT = {
 # CORS CONFIGURATION
 # ============================
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-]
+cors_allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
+if cors_allowed_origins:
+    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_allowed_origins.split(",") if origin.strip()]
+else:
+    CORS_ALLOWED_ORIGINS = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -242,6 +246,7 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = int(os.getenv('CELERY_WORKER_PREFETCH_MULTIP
 CELERY_TASK_ACKS_LATE = os.getenv('CELERY_TASK_ACKS_LATE', 'True') == 'True'
 CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', '900'))  # hard limit in seconds
 CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv('CELERY_TASK_SOFT_TIME_LIMIT', '840'))
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 
 
 # ============================

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import ClientLoggerGuard from "@/components/ClientLoggerGuard";
 
 export const metadata: Metadata = {
   title: "HireNowPro - AI-Powered Interview Platform",
@@ -14,6 +15,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
+        <ClientLoggerGuard />
         <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">{children}</div>
       </body>
     </html>

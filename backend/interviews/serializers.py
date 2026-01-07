@@ -1,5 +1,6 @@
 from rest_framework import serializers
 import logging
+from django.conf import settings
 from .models import (
     Interview,
     InterviewQuestion,
@@ -15,6 +16,11 @@ from applicants.models import OfficeLocation
 from django.db.models import Q
 from applicants.models import Applicant
 from .question_alignment import get_alignment_error
+
+
+def _debug_print(*args, **kwargs):
+    if settings.DEBUG:
+        print(*args, **kwargs)
 
 
 class OfficeMiniSerializer(serializers.ModelSerializer):
@@ -448,7 +454,7 @@ class InterviewCreateSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         job_position_id = validated_data.pop("job_position_id", None)
         validated_data['status'] = 'pending'
-        print("DEBUG_INTERVIEW_INPUT:", validated_data)
+        _debug_print("DEBUG_INTERVIEW_INPUT:", validated_data)
         interview = super().create(validated_data)
 
         # Update applicant status
@@ -468,7 +474,7 @@ class InterviewCreateSerializer(serializers.ModelSerializer):
             interview=interview,
             status='queued'
         )
-        print("DEBUG_INTERVIEW_OBJ:", interview)
+        _debug_print("DEBUG_INTERVIEW_OBJ:", interview)
         return interview
 
 

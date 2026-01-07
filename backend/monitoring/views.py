@@ -3,10 +3,12 @@ ViewSet for Token Usage Monitoring API
 """
 
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.db.models import Sum, Avg, Count, Q
+from django.db import connections
+from django.core.cache import cache
 from django.utils import timezone
 from datetime import timedelta
 from decimal import Decimal
@@ -18,6 +20,44 @@ from .serializers import (
     TokenUsageStatsSerializer
 )
 from accounts.permissions import RolePermission
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def healthcheck(request):
+    db_ok = True
+    redis_ok = True
+    db_error = ""
+    redis_error = ""
+
+    try:
+        with connections["default"].cursor() as cursor:
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
+    except Exception as exc:
+        db_ok = False
+        db_error = str(exc)
+
+    try:
+        cache_key = "healthcheck"
+        cache.set(cache_key, "ok", timeout=5)
+        redis_ok = cache.get(cache_key) == "ok"
+        if not redis_ok:
+            redis_error = "cache read/write mismatch"
+    except Exception as exc:
+        redis_ok = False
+        redis_error = str(exc)
+
+    status_code = status.HTTP_200_OK if db_ok and redis_ok else status.HTTP_503_SERVICE_UNAVAILABLE
+    payload = {
+        "status": "ok" if status_code == status.HTTP_200_OK else "degraded",
+        "db": "ok" if db_ok else "error",
+        "redis": "ok" if redis_ok else "error",
+        "db_error": db_error,
+        "redis_error": redis_error,
+        "timestamp": timezone.now().isoformat(),
+    }
+    return Response(payload, status=status_code)
 
 
 class TokenUsageViewSet(viewsets.ReadOnlyModelViewSet):
