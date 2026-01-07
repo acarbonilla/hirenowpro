@@ -1,6 +1,11 @@
 import json
 import logging
 import time
+import requests
+import re
+from pathlib import Path
+from django.conf import settings
+from django.http import HttpResponse
 from django.utils.dateparse import parse_datetime
 from rest_framework import generics, status, viewsets
 from rest_framework.exceptions import ValidationError
@@ -408,6 +413,82 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
                 extra={"interview_id": interview.id},
             )
         return Response({"detail": "Integrity metadata recorded."}, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="tts",
+        permission_classes=[AllowAny],
+        authentication_classes=[],
+    )
+    def tts(self, request, pk=None):
+        text = (request.data.get("text") or "").strip()
+        if not text:
+            return Response({"detail": "Text is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        api_key = getattr(settings, "DEEPGRAM_API_KEY", None) or ""
+        if not api_key:
+            return Response({"detail": "Deepgram API key not configured."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        model = getattr(settings, "DEEPGRAM_TTS_MODEL", None) or "aura-2-thalia-en"
+        if not model.startswith("aura-"):
+            logger.error("Deepgram TTS model must start with aura-; refusing TTS request.")
+            return Response(
+                {"detail": "Deepgram TTS model misconfigured."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        if re.fullmatch(r"[A-Fa-f0-9]{40,}", model or "") or len(model) > 40:
+            logger.error("Deepgram TTS model appears to be an API key; refusing TTS request.")
+            return Response(
+                {"detail": "Deepgram TTS model misconfigured."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        url = f"https://api.deepgram.com/v1/speak?model={model}"
+        headers = {
+            "Authorization": f"Token {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "audio/wav",
+        }
+        payload = {"text": text}
+
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=15)
+            if response.status_code != 200:
+                logger.error(
+                    "Deepgram TTS non-200 response",
+                    extra={
+                        "status_code": response.status_code,
+                        "response_text": response.text,
+                        "response_headers": dict(response.headers),
+                        "url": url,
+                    },
+                )
+                raise RuntimeError("Deepgram TTS failed with non-200 response")
+        except Exception:
+            logger.exception("Deepgram TTS failed")
+            return Response({"detail": "TTS request failed."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        logger.info(
+            "Deepgram TTS response metadata",
+            extra={
+                "dg_request_id": response.headers.get("dg-request-id"),
+                "dg_model_name": response.headers.get("dg-model-name"),
+                "content_type": response.headers.get("content-type"),
+                "dg_char_count": response.headers.get("dg-char-count"),
+            },
+        )
+
+        audio_bytes = response.content
+        try:
+            base_dir = getattr(settings, "BASE_DIR", None)
+            output_path = Path(base_dir or ".") / "test.wav"
+            output_path.write_bytes(audio_bytes)
+        except Exception:
+            logger.exception("Failed to write Deepgram TTS test audio")
+
+        tts_response = HttpResponse(audio_bytes, content_type="audio/wav")
+        tts_response["Cache-Control"] = "no-store"
+        return tts_response
 
 
 class PublicPositionTypeLookupView(generics.ListAPIView):

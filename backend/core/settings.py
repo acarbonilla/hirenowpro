@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.1/ref/settings/
 from pathlib import Path
 import os
 import secrets
+import logging
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -263,6 +264,11 @@ DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'no-repl
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY', '')
+DEEPGRAM_TTS_MODEL = os.getenv('DEEPGRAM_TTS_MODEL', 'aura-2-thalia-en')
+
+logger = logging.getLogger(__name__)
+logger.info("Deepgram API key loaded: %s", bool(DEEPGRAM_API_KEY))
+logger.info("Deepgram TTS model: %s", DEEPGRAM_TTS_MODEL)
 
 
 # ============================
