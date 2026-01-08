@@ -3,6 +3,8 @@ import axios from "axios";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 const VOICE_ID = "thalia";
 const LANGUAGE = "en-US";
+export const TTS_PROVIDER = "deepgram";
+export const TTS_MODEL = "aura-2-thalia-en";
 
 type SpeakHandlers = {
   onStart?: () => void;
@@ -69,10 +71,14 @@ const fetchAudio = async (interviewId: number, text: string, cacheKey?: string) 
 
 export const ttsService = {
   async speak({ interviewId, text, cacheKey, onStart, onEnd, onError }: SpeakOptions) {
+    if (TTS_PROVIDER !== "deepgram") {
+      throw new Error("TTS provider must be deepgram");
+    }
     if (!text || !interviewId) return false;
 
     const token = ++activeToken;
     try {
+      console.log("Playing TTS via Deepgram (Thalia)");
       const audioBytes = await fetchAudio(interviewId, text, cacheKey);
       if (!audioBytes || token !== activeToken || audioBytes.byteLength === 0) return false;
 

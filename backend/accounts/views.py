@@ -2,6 +2,8 @@
 Authentication views
 """
 
+import logging
+
 from rest_framework import status, generics, permissions, viewsets
 from rest_framework.settings import api_settings
 from rest_framework.decorators import api_view, permission_classes
@@ -10,7 +12,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.contrib.auth import logout
-from .models import User
+from .models import User, normalize_user_type
 from common.throttles import (
     RegistrationHourlyThrottle,
     RegistrationDailyThrottle,
@@ -47,14 +49,21 @@ class LoginView(generics.GenericAPIView):
         user = serializer.validated_data['user']
 
         # Role gate if configured
-        normalized_role = getattr(user, "normalized_role", getattr(user, "role", None))
-        if self.allowed_roles is not None and normalized_role not in self.allowed_roles:
+        user_type = getattr(user, "user_type", None)
+        effective_role = normalize_user_type(user_type)
+        if user.role and effective_role and user.role != effective_role:
+            logging.getLogger(__name__).warning(
+                "User role mismatch on login",
+                extra={"user_id": getattr(user, "id", None), "user_type": user_type, "role": user.role},
+            )
+
+        if self.allowed_roles is not None and effective_role not in self.allowed_roles:
             # For HR login, derive role from group membership; otherwise enforce allowed_roles strictly
             is_hr_login = any(role.lower() == "hr" for role in self.allowed_roles)
             if is_hr_login:
                 hr_role = None
                 if user.groups.filter(name="HR Recruiter").exists():
-                    hr_role = "recruiter"
+                    hr_role = "hr_recruiter"
                 elif user.groups.filter(name="HR Manager").exists():
                     hr_role = "hr_manager"
                 elif user.groups.filter(name="IT Support").exists():
@@ -63,14 +72,15 @@ class LoginView(generics.GenericAPIView):
                 if hr_role is None:
                     return Response({"detail": "Access denied for this role."}, status=status.HTTP_403_FORBIDDEN)
 
-                normalized_role = hr_role
+                effective_role = hr_role
             else:
                 return Response({"detail": "Access denied for this role."}, status=status.HTTP_403_FORBIDDEN)
         
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
         # Embed useful claims for frontend/permissions
-        refresh["role"] = normalized_role
+        refresh["user_type"] = user_type
+        refresh["role"] = effective_role
         refresh["is_staff"] = user.is_staff
         refresh["is_superuser"] = user.is_superuser
         refresh["email"] = user.email
@@ -127,7 +137,9 @@ class RegisterView(generics.CreateAPIView):
         
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
-        refresh["role"] = getattr(user, "normalized_role", getattr(user, "role", None))
+        user_type = getattr(user, "user_type", None)
+        refresh["user_type"] = user_type
+        refresh["role"] = normalize_user_type(user_type)
         refresh["is_staff"] = user.is_staff
         refresh["is_superuser"] = user.is_superuser
         
@@ -178,8 +190,8 @@ def check_auth(request):
     """
     user = request.user
     groups = list(user.groups.values_list('name', flat=True))
-    role = getattr(user, "normalized_role", getattr(user, "role", None))
-    user_type = getattr(user, "user_type", role)
+    user_type = getattr(user, "user_type", None)
+    role = normalize_user_type(user_type)
     
     can_view_system_analytics = (
         'HR Manager' in groups

@@ -215,10 +215,15 @@ SIMPLE_JWT = {
 
 CORS_ALLOW_CREDENTIALS = True
 
-CORS_ALLOWED_ORIGINS = os.getenv(
-    "CORS_ALLOWED_ORIGINS",
-    ""
-).split(",") if os.getenv("CORS_ALLOWED_ORIGINS") else []
+if DEBUG:
+    # Development: allow everything (safe locally)
+    CORS_ALLOW_ALL_ORIGINS = True
+else:
+    # Production: strict allowlist
+    CORS_ALLOWED_ORIGINS = os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        ""
+    ).split(",") if os.getenv("CORS_ALLOWED_ORIGINS") else []
 
 CORS_ALLOW_HEADERS = list(default_headers) + [
     "authorization",
@@ -281,10 +286,18 @@ GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY', '')
 DEEPGRAM_TTS_MODEL = os.getenv('DEEPGRAM_TTS_MODEL', 'aura-2-thalia-en')
+TTS_PROVIDER = "deepgram"
 
 logger = logging.getLogger(__name__)
+if not DEEPGRAM_API_KEY:
+    raise RuntimeError("DEEPGRAM_API_KEY must be set for TTS")
+if DEEPGRAM_TTS_MODEL != "aura-2-thalia-en":
+    raise RuntimeError("DEEPGRAM_TTS_MODEL must be aura-2-thalia-en for production TTS")
+if TTS_PROVIDER != "deepgram":
+    raise RuntimeError("TTS_PROVIDER must be deepgram")
 logger.info("Deepgram API key loaded: %s", bool(DEEPGRAM_API_KEY))
 logger.info("Deepgram TTS model: %s", DEEPGRAM_TTS_MODEL)
+logger.info("TTS_PROVIDER=%s, model=%s", TTS_PROVIDER, DEEPGRAM_TTS_MODEL)
 
 
 # ============================

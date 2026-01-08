@@ -14,6 +14,7 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'email', 'user_type', 'role', 'first_name', 'last_name']
         read_only_fields = ['id']
+        extra_kwargs = {"role": {"read_only": True}}
 
 
 class HRUserWriteSerializer(serializers.ModelSerializer):
@@ -25,6 +26,7 @@ class HRUserWriteSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'email', 'user_type', 'role', 'first_name', 'last_name', 'password', 'is_active']
         read_only_fields = ['id']
+        extra_kwargs = {"role": {"read_only": True}}
 
     def create(self, validated_data):
         password = validated_data.pop("password", None)

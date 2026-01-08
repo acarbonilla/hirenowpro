@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from .models import normalize_user_type
 
 
 APPLICANT_SECRET = settings.APPLICANT_SECRET
@@ -23,7 +24,7 @@ def validate_hr_access(user):
     allowed_roles = ["hr_manager", "hr_recruiter"]
     if getattr(settings, "LOG_HR_AUTH", False):
         logging.getLogger(__name__).debug("HR auth check")
-    return user.role in allowed_roles
+    return normalize_user_type(getattr(user, "user_type", None)) in allowed_roles
 
 
 def generate_applicant_token(applicant_id, expiry_hours=None):
@@ -181,15 +182,18 @@ class HRTokenAuthentication(JWTAuthentication):
         if not res:
             return None
         user, token = res
-        role = getattr(user, "role", None)
-        # SimpleJWT stores claims; token.payload may have role claim
+        user_type = getattr(user, "user_type", None)
+        claim_user_type = None
         claim_role = None
         try:
+            claim_user_type = token.payload.get("user_type")
             claim_role = token.payload.get("role")
         except Exception:
             pass
-        # Role is informational only; authorization handled by DRF permissions.
-        effective_role = claim_role or role
-        if effective_role:
-            setattr(user, "user_type", effective_role)
+        effective_claim = claim_user_type or claim_role
+        if effective_claim and user_type and normalize_user_type(user_type) != normalize_user_type(effective_claim):
+            logging.getLogger(__name__).warning(
+                "User type mismatch in token",
+                extra={"user_id": getattr(user, "id", None), "user_type": user_type, "token_user_type": effective_claim},
+            )
         return (user, token)

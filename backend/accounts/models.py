@@ -8,25 +8,40 @@ ROLE_GROUP_MAP = {
     "applicant": "Applicant",
 }
 
+
+def normalize_user_type(value):
+    return value
+
 class User(AbstractUser):
     """Custom User model extending Django's AbstractUser"""
     
     ROLE_CHOICES = [
-        ('applicant', 'Applicant'),
-        ('hr', 'HR'),
-        ('admin', 'Admin'),
-        ('superadmin', 'Super Admin'),
+        ("recruiter", "Recruiter"),
+        ("hr_admin", "HR Admin"),
+        ("system_admin", "System Admin"),
+        ("hr_recruiter", "HR Recruiter"),
+        ("hr_manager", "HR Manager"),
+        ("it_support", "IT Support"),
+        ("admin", "Admin"),
+        ("superadmin", "Super Admin"),
+        ("applicant", "Applicant"),
     ]
-    
+
     USER_TYPE_CHOICES = [
-        ('recruiter', 'Recruiter'),
-        ('hr_admin', 'HR Admin'),
-        ('system_admin', 'System Admin'),
+        ("recruiter", "Recruiter"),
+        ("hr_admin", "HR Admin"),
+        ("system_admin", "System Admin"),
+        ("hr_recruiter", "HR Recruiter"),
+        ("hr_manager", "HR Manager"),
+        ("it_support", "IT Support"),
+        ("admin", "Admin"),
+        ("superadmin", "Super Admin"),
+        ("applicant", "Applicant"),
     ]
     
     email = models.EmailField(unique=True)
-    user_type = models.CharField(max_length=20, choices=USER_TYPE_CHOICES, default='recruiter')
-    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='applicant')
+    user_type = models.CharField(max_length=20, choices=USER_TYPE_CHOICES, default="recruiter")
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES, default="applicant")
     
     class Meta:
         db_table = 'users'
@@ -38,15 +53,9 @@ class User(AbstractUser):
 
     @property
     def normalized_role(self):
-        """Map legacy user_type to role if role not explicitly set"""
-        if self.role:
-            return self.role
-        mapping = {
-            'recruiter': 'hr',
-            'hr_admin': 'admin',
-            'system_admin': 'superadmin',
-        }
-        return mapping.get(self.user_type, 'applicant')
+        """Derived role for legacy compatibility (user_type is authoritative)."""
+        normalized = normalize_user_type(self.user_type)
+        return normalized or "applicant"
 
     def sync_role_group(self):
         """Ensures user.role always matches the correct Django group."""
@@ -61,6 +70,7 @@ class User(AbstractUser):
         self.groups.add(group)
 
     def save(self, *args, **kwargs):
+        self.role = self.normalized_role
         super().save(*args, **kwargs)
         self.sync_role_group()
 

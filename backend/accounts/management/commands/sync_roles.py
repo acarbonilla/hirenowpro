@@ -1,5 +1,5 @@
 from django.core.management.base import BaseCommand
-from accounts.models import User, ROLE_GROUP_MAP
+from accounts.models import User, ROLE_GROUP_MAP, normalize_user_type
 from django.contrib.auth.models import Group
 
 
@@ -8,7 +8,13 @@ class Command(BaseCommand):
 
     def handle(self, *args, **kwargs):
         for user in User.objects.all():
-            role = user.role
+            role = normalize_user_type(getattr(user, "user_type", None))
+            if not role:
+                self.stdout.write(f"Skipping {user.username}, missing user_type")
+                continue
+            if user.role != role:
+                user.role = role
+                user.save(update_fields=["role"])
             group_name = ROLE_GROUP_MAP.get(role)
 
             if not group_name:

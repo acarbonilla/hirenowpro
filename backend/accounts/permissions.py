@@ -1,9 +1,14 @@
 from rest_framework.permissions import BasePermission
 from common.permissions import IsHRUser as PermissionBasedIsHRUser
+from .models import normalize_user_type
 
 
 def _user_type(user):
-    return getattr(user, "user_type", None) or getattr(user, "normalized_role", getattr(user, "role", None))
+    return getattr(user, "user_type", None)
+
+
+def _effective_role(user):
+    return normalize_user_type(_user_type(user))
 
 
 class IsApplicant(BasePermission):
@@ -13,25 +18,25 @@ class IsApplicant(BasePermission):
 
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) == "applicant")
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "applicant")
 
 
 class IsHRManager(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) == "hr_manager")
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "hr_manager")
 
 
 class IsHRRecruiter(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) == "hr_recruiter")
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "hr_recruiter")
 
 
 class IsITSupport(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) == "it_support")
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "it_support")
 
 
 class HRPermission(BasePermission):
@@ -43,7 +48,7 @@ class HRPermission(BasePermission):
 
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) in self.allowed)
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) in self.allowed)
 
 
 class RolePermission(BasePermission):
@@ -65,7 +70,7 @@ class RolePermission(BasePermission):
         if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
             return True
 
-        normalized_role = _user_type(user)
+        normalized_role = _effective_role(user)
         normalized_role_upper = normalized_role.upper() if normalized_role else None
         required_upper = [r.upper() for r in required_roles]
 
@@ -92,7 +97,7 @@ class PublicOrHRManager(BasePermission):
             return True
         if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
             return True
-        return _user_type(user) in self.allowed_roles
+        return _effective_role(user) in self.allowed_roles
 
 
 class ApplicantOrHR(BasePermission):
@@ -104,16 +109,16 @@ class ApplicantOrHR(BasePermission):
         user = request.user
         if not user:
             return False
-        if getattr(user, "is_authenticated", False) and _user_type(user) == "applicant":
+        if getattr(user, "is_authenticated", False) and _effective_role(user) == "applicant":
             return True
-        return bool(_user_type(user) in ["hr_manager", "hr_recruiter", "it_support", "admin", "superadmin"] or getattr(user, "is_staff", False))
+        return bool(_effective_role(user) in ["hr_manager", "hr_recruiter", "it_support", "admin", "superadmin"] or getattr(user, "is_staff", False))
 
 
 # Backwards-compat aliases used elsewhere
 class IsAdmin(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _user_type(user) in ["admin", "superadmin"])
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) in ["admin", "superadmin"])
 
 
 class IsSuperAdmin(BasePermission):

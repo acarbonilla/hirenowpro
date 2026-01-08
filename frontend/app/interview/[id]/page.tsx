@@ -6,7 +6,7 @@ import Webcam from "react-webcam";
 import { interviewAPI, api, API_BASE_URL } from "@/lib/api";
 import { getApplicantToken } from "@/app/utils/auth-applicant";
 import { useStore } from "@/store/useStore";
-import { ttsService } from "@/lib/ttsService";
+import { ttsService, TTS_PROVIDER } from "@/lib/ttsService";
 import {
   Video,
   VideoOff,
@@ -863,220 +863,17 @@ export default function InterviewPage() {
     console.log("MediaRecorder started with state:", mediaRecorder.state);
   }, [handleDataAvailable, startSilenceDetection]);
 
-  const ttsVoiceRef = useRef<SpeechSynthesisVoice | null>(null);
-  const ttsSessionRef = useRef(0);
-
-  const resolveFemaleVoice = useCallback(() => {
-    if (typeof window === "undefined" || ttsVoiceRef.current) return;
-    if (!("speechSynthesis" in window)) return;
-
-    const voices = window.speechSynthesis.getVoices();
-    if (!voices.length) return;
-
-    const femaleKeywords = [
-      "female",
-      "woman",
-      "zira",
-      "susan",
-      "samantha",
-      "jenny",
-      "victoria",
-      "karen",
-      "moira",
-      "tessa",
-      "fiona",
-      "joanna",
-      "ivy",
-      "emma",
-      "ava",
-      "allison",
-      "olivia",
-      "catherine",
-      "wavenet-f",
-      "neural-f",
-    ];
-    const maleKeywords = [
-      "male",
-      "man",
-      "david",
-      "mark",
-      "john",
-      "alex",
-      "daniel",
-      "fred",
-      "tom",
-      "peter",
-      "james",
-      "george",
-      "arthur",
-      "bruce",
-      "roger",
-      "steve",
-      "microsoft david",
-      "microsoft mark",
-    ];
-
-    const hasKeyword = (voice: SpeechSynthesisVoice, keywords: string[]) => {
-      const haystack = `${voice.name} ${voice.voiceURI}`.toLowerCase();
-      return keywords.some((keyword) => haystack.includes(keyword));
-    };
-
-    const preferredNames = [
-      "google us english",
-      "jenny",
-      "samantha",
-    ];
-    const localePriority = ["en-us", "en-ph", "en-gb"];
-
-    const localeRank = (voice: SpeechSynthesisVoice) => {
-      const lang = (voice.lang || "").toLowerCase();
-      const index = localePriority.findIndex((locale) => lang.startsWith(locale));
-      return index === -1 ? localePriority.length : index;
-    };
-
-    const preferredNameRank = (voice: SpeechSynthesisVoice) => {
-      const name = voice.name.toLowerCase();
-      const index = preferredNames.findIndex((preferred) => name.includes(preferred));
-      return index === -1 ? preferredNames.length : index;
-    };
-
-    const isFemale = (voice: SpeechSynthesisVoice) => hasKeyword(voice, femaleKeywords);
-    const isMale = (voice: SpeechSynthesisVoice) => hasKeyword(voice, maleKeywords);
-
-    const rankVoice = (voice: SpeechSynthesisVoice) => {
-      return [
-        preferredNameRank(voice),
-        localeRank(voice),
-        voice.default ? 0 : 1,
-        voice.name.toLowerCase(),
-      ];
-    };
-
-    const compareRank = (a: SpeechSynthesisVoice, b: SpeechSynthesisVoice) => {
-      const rankA = rankVoice(a);
-      const rankB = rankVoice(b);
-      for (let i = 0; i < rankA.length; i += 1) {
-        if (rankA[i] < rankB[i]) return -1;
-        if (rankA[i] > rankB[i]) return 1;
-      }
-      return 0;
-    };
-
-    const preferredFemale = voices
-      .filter((voice) => isFemale(voice))
-      .sort(compareRank);
-    if (preferredFemale.length) {
-      ttsVoiceRef.current = preferredFemale[0];
-      return;
-    }
-
-    const neutralFemale = voices
-      .filter((voice) => !isMale(voice))
-      .sort(compareRank);
-    if (neutralFemale.length) {
-      ttsVoiceRef.current = neutralFemale[0];
-      return;
-    }
-
-    console.warn("Female TTS voice unavailable; default voice may not meet gender requirement.");
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-    resolveFemaleVoice();
-    const handleVoicesChanged = () => resolveFemaleVoice();
-    window.speechSynthesis.addEventListener("voiceschanged", handleVoicesChanged);
-    return () => {
-      window.speechSynthesis.removeEventListener("voiceschanged", handleVoicesChanged);
-    };
-  }, [resolveFemaleVoice]);
-
-  const speakWithWebSpeech = useCallback(
-    (text: string, handlers?: { onEnd?: () => void; onError?: () => void }) => {
-      if (!text || typeof window === "undefined" || !("speechSynthesis" in window)) return false;
-
-      const selectedVoice = ttsVoiceRef.current;
-      let voiceToUse = selectedVoice;
-      if (!voiceToUse) {
-        resolveFemaleVoice();
-        if (ttsVoiceRef.current) {
-          voiceToUse = ttsVoiceRef.current;
-        }
-      }
-      if (!voiceToUse) {
-        return false;
-      }
-
-      const segments =
-        text.match(/[^.!?]+[.!?]*/g)?.map((segment) => segment.trim()).filter(Boolean) ?? [text.trim()];
-
-      if (!segments.length) {
-        return false;
-      }
-
-      ttsSessionRef.current += 1;
-      const sessionId = ttsSessionRef.current;
-      window.speechSynthesis.cancel();
-
-      let index = 0;
-      const speakSegment = () => {
-        if (sessionId !== ttsSessionRef.current) return;
-        if (index >= segments.length) {
-          setIsSpeaking(false);
-          handlers?.onEnd?.();
-          return;
-        }
-
-        const utterance = new SpeechSynthesisUtterance(segments[index]);
-        utterance.lang = TTS_CONFIG.language;
-        utterance.rate = TTS_CONFIG.rate;
-        utterance.pitch = TTS_CONFIG.pitch;
-        utterance.volume = TTS_CONFIG.volume;
-        utterance.voice = voiceToUse;
-        utterance.onstart = () => {
-          if (index === 0) {
-            setIsSpeaking(true);
-          }
-        };
-        utterance.onend = () => {
-          if (sessionId !== ttsSessionRef.current) return;
-          index += 1;
-          if (index >= segments.length) {
-            setIsSpeaking(false);
-            handlers?.onEnd?.();
-            return;
-          }
-          setTimeout(speakSegment, TTS_CONFIG.sentence_pause_ms);
-        };
-        utterance.onerror = () => {
-          if (sessionId !== ttsSessionRef.current) return;
-          setIsSpeaking(false);
-          handlers?.onError?.();
-        };
-
-        window.speechSynthesis.speak(utterance);
-      };
-
-      speakSegment();
-      return true;
-    },
-    [resolveFemaleVoice]
-  );
-
   const speak = useCallback(
     (text: string, handlers?: { onEnd?: () => void; onError?: () => void }, cacheKey?: string) => {
       if (!text) return false;
-
-      const fallback = () => {
-        const fallbackOk = speakWithWebSpeech(text, handlers);
-        if (!fallbackOk) {
-          handlers?.onError?.();
-        }
-        return fallbackOk;
-      };
-
+      // Web Speech API is intentionally disabled for interview TTS.
+      if (TTS_PROVIDER !== "deepgram") {
+        throw new Error("TTS provider must be deepgram");
+      }
       if (!interviewId || Number.isNaN(interviewId)) {
-        return fallback();
+        setError("Audio unavailable.");
+        handlers?.onError?.();
+        return false;
       }
 
       void ttsService
@@ -1091,17 +888,20 @@ export default function InterviewPage() {
           },
           onError: () => {
             setIsSpeaking(false);
+            setError("Audio unavailable.");
+            handlers?.onError?.();
           },
         })
         .then((didSpeak) => {
           if (!didSpeak) {
-            fallback();
+            setError("Audio unavailable.");
+            handlers?.onError?.();
           }
         });
 
       return true;
     },
-    [interviewId, speakWithWebSpeech]
+    [interviewId]
   );
 
   // Text-to-speech function

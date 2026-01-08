@@ -426,6 +426,11 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         if not text:
             return Response({"detail": "Text is required."}, status=status.HTTP_400_BAD_REQUEST)
 
+        provider = getattr(settings, "TTS_PROVIDER", "deepgram")
+        if provider != "deepgram":
+            logger.error("TTS_PROVIDER is not deepgram; refusing TTS request.", extra={"provider": provider})
+            return Response({"detail": "TTS provider misconfigured."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
         api_key = getattr(settings, "DEEPGRAM_API_KEY", None) or ""
         if not api_key:
             return Response({"detail": "Deepgram API key not configured."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

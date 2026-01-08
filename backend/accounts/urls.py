@@ -20,7 +20,7 @@ app_name = 'accounts'
 urlpatterns = [
     # Authentication
     path('auth/login/', LoginView.as_view(), name='login'),
-    path('auth/hr-login/', HRLoginView.as_view(allowed_roles=["hr", "admin", "superadmin"]), name='hr_login'),
+    path('auth/hr-login/', HRLoginView.as_view(allowed_roles=["hr_recruiter", "hr_manager", "it_support", "admin", "superadmin"]), name='hr_login'),
     path('auth/applicant-login/', ApplicantLoginView.as_view(allowed_roles=["applicant"]), name='applicant_login'),
     path('auth/logout/', LogoutView.as_view(), name='logout'),
     path('auth/register/', RegisterView.as_view(), name='register'),

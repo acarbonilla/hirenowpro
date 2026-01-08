@@ -19,3 +19,11 @@
 - Staggered loading (summary first, details after) to isolate slow endpoints.
 - Values/only queries for summaries to prevent accidental heavy joins.
 - Recreate corrupted files in plain ASCII/UTF-8 when build errors arise.
+
+## Auth Role Source of Truth
+- `user_type` is authoritative for auth, routing, and JWT claims.
+- `role` is legacy and mirrors `user_type`; do not rely on it for access control.
+
+## Interview TTS
+- Deepgram (`aura-2-thalia-en`) is the only supported TTS for interview questions.
+- Web Speech API is intentionally disabled for interview TTS.

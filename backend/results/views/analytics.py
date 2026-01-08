@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from applicants.models import Applicant
 from interviews.models import Interview
 from results.models import InterviewResult
+from accounts.models import normalize_user_type
 
 
 def _has_system_analytics_access(user) -> bool:
@@ -22,7 +23,7 @@ def _has_system_analytics_access(user) -> bool:
     if {"HR Manager", "Lead Recruiter", "System Owner"} & groups:
         return True
 
-    role = getattr(user, "normalized_role", getattr(user, "role", None))
+    role = normalize_user_type(getattr(user, "user_type", None))
     return role in {"admin", "superadmin", "hr_manager"}
 
 
