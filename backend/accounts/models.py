@@ -10,7 +10,12 @@ ROLE_GROUP_MAP = {
 
 
 def normalize_user_type(value):
-    return value
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip().lower()
+    return str(value).strip().lower()
+
 
 class User(AbstractUser):
     """Custom User model extending Django's AbstractUser"""

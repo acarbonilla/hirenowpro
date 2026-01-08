@@ -50,16 +50,23 @@ class LoginView(generics.GenericAPIView):
 
         # Role gate if configured
         user_type = getattr(user, "user_type", None)
-        effective_role = normalize_user_type(user_type)
-        if user.role and effective_role and user.role != effective_role:
+        role = getattr(user, "role", None)
+        normalized_user_type = normalize_user_type(user_type)
+        normalized_role = normalize_user_type(role)
+        effective_role = normalized_user_type
+        if normalized_role and effective_role and normalized_role != effective_role:
             logging.getLogger(__name__).warning(
                 "User role mismatch on login",
-                extra={"user_id": getattr(user, "id", None), "user_type": user_type, "role": user.role},
+                extra={"user_id": getattr(user, "id", None), "user_type": user_type, "role": role},
             )
 
-        if self.allowed_roles is not None and effective_role not in self.allowed_roles:
+        allowed_roles = None
+        if self.allowed_roles is not None:
+            allowed_roles = {normalize_user_type(role) for role in self.allowed_roles if role}
+
+        if allowed_roles is not None and effective_role not in allowed_roles:
             # For HR login, derive role from group membership; otherwise enforce allowed_roles strictly
-            is_hr_login = any(role.lower() == "hr" for role in self.allowed_roles)
+            is_hr_login = any((role or "").lower() == "hr" for role in (self.allowed_roles or []))
             if is_hr_login:
                 hr_role = None
                 if user.groups.filter(name="HR Recruiter").exists():
