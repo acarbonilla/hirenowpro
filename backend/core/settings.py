@@ -15,6 +15,7 @@ import os
 import secrets
 import logging
 from dotenv import load_dotenv
+from corsheaders.defaults import default_headers
 
 # Load environment variables
 load_dotenv()
