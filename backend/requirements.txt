@@ -48,3 +48,5 @@ pytz==2024.2
 # Development & Testing
 pytest==8.3.3
 pytest-django==4.9.0
+
+gunicorn==21.2.0

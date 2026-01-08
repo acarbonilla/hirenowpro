@@ -212,16 +212,17 @@ SIMPLE_JWT = {
 # CORS CONFIGURATION
 # ============================
 
-cors_allowed_origins = os.getenv("CORS_ALLOWED_ORIGINS", "").strip()
-if cors_allowed_origins:
-    CORS_ALLOWED_ORIGINS = [origin.strip() for origin in cors_allowed_origins.split(",") if origin.strip()]
-else:
-    CORS_ALLOWED_ORIGINS = [
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ]
-
 CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOWED_ORIGINS = os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    ""
+).split(",") if os.getenv("CORS_ALLOWED_ORIGINS") else []
+
+CORS_ALLOW_HEADERS = list(default_headers) + [
+    "authorization",
+]
+
 
 
 
