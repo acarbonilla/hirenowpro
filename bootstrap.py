@@ -9,11 +9,14 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 from urllib.request import urlopen, Request
+from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=ROOT / ".env")
 BACKEND_DIR = ROOT / "backend"
 FRONTEND_DIR = ROOT / "frontend"
 LOG_DIR = ROOT / "logs"
+BOOTSTRAP_MARKER = ROOT / ".bootstrapped"
 
 REQUIRED_ENV = [
     "DJANGO_SECRET_KEY",
@@ -51,6 +54,9 @@ def require_cmd(name):
 
 
 def check_env_vars():
+    check_process_tools()
+    require_cmd("node")
+
     missing = [key for key in REQUIRED_ENV if not os.getenv(key)]
     if missing:
         fail(f"Missing required env vars: {', '.join(missing)}")
@@ -61,6 +67,13 @@ def check_env_vars():
             fail("Missing DATABASE_URL or DB_* vars: " + ", ".join(missing_db))
 
     log("CHECK", "Environment variables OK")
+
+
+def check_process_tools():
+    if shutil.which("pgrep") or shutil.which("ps"):
+        log("CHECK", "Process discovery available")
+        return
+    fail("Required command not found: pgrep or ps")
 
 
 def parse_host_port_from_url(url, default_port):
@@ -190,9 +203,10 @@ def ensure_next_build():
 def reload_nginx():
     if not shutil.which("systemctl"):
         fail("systemctl not found for nginx reload")
-    result = subprocess.run(["sudo", "systemctl", "reload", "nginx"])
-    if result.returncode != 0:
-        fail("Failed to reload nginx")
+    try:
+        subprocess.run(["sudo", "systemctl", "reload", "nginx"], check=True)
+    except subprocess.CalledProcessError as exc:
+        fail(f"Failed to reload nginx (exit {exc.returncode})")
     log("START", "nginx reloaded")
 
 
@@ -231,56 +245,26 @@ def health_checks():
 
 def main():
     log("BOOT", "HireNowPro bootstrap starting")
+    if BOOTSTRAP_MARKER.exists() and os.getenv("FORCE_BOOTSTRAP") != "1":
+        log("SKIP", "Bootstrap already completed (set FORCE_BOOTSTRAP=1 to re-run)")
+        sys.exit(0)
+
     check_python_version()
-    require_cmd("node")
     require_cmd("npm")
-    require_cmd("gunicorn")
-    require_cmd("celery")
+    require_cmd("systemctl")
 
     check_env_vars()
-    check_postgres()
-    check_redis()
-
     ensure_dirs()
+    start_redis()
+    check_redis()
+    check_postgres()
     django_prep()
 
-    start_redis()
-
-    ensure_service_running(
-        "Gunicorn",
-        "gunicorn core.wsgi:application",
-        ["gunicorn", "core.wsgi:application", "--bind", "127.0.0.1:8000", "--workers", "3", "--timeout", "120"],
-        cwd=str(BACKEND_DIR),
-        log_file="gunicorn.log",
-    )
-
-    ensure_service_running(
-        "Celery",
-        "celery -A core worker",
-        ["celery", "-A", "core", "worker", "-l", "info"],
-        cwd=str(BACKEND_DIR),
-        log_file="celery.log",
-    )
-
     ensure_next_build()
-
-    ensure_service_running(
-        "Next.js",
-        "next start",
-        ["npm", "run", "start"],
-        cwd=str(FRONTEND_DIR),
-        log_file="next.log",
-    )
-
     reload_nginx()
-
-    health_checks()
-
-    log("DONE", "ALL SERVICES UP")
+    BOOTSTRAP_MARKER.touch()
+    log("DONE", "Bootstrap completed successfully")
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except subprocess.CalledProcessError as exc:
-        fail(f"Command failed with exit code {exc.returncode}")
+    main()
