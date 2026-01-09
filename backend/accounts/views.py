@@ -9,10 +9,12 @@ from rest_framework.settings import api_settings
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.contrib.auth import logout
 from .models import User, normalize_user_type
+from .utils import resolve_account_type
 from common.throttles import (
     RegistrationHourlyThrottle,
     RegistrationDailyThrottle,
@@ -60,14 +62,29 @@ class LoginView(generics.GenericAPIView):
                 extra={"user_id": getattr(user, "id", None), "user_type": user_type, "role": role},
             )
 
+        account_type = resolve_account_type(user)
         allowed_roles = None
         if self.allowed_roles is not None:
-            allowed_roles = {normalize_user_type(role) for role in self.allowed_roles if role}
+            allowed_roles = {(role or "").upper() for role in self.allowed_roles}
 
-        if allowed_roles is not None and effective_role not in allowed_roles:
-            # For HR login, derive role from group membership; otherwise enforce allowed_roles strictly
-            is_hr_login = any((role or "").lower() == "hr" for role in (self.allowed_roles or []))
-            if is_hr_login:
+        if allowed_roles is not None:
+            if "APPLICANT" in allowed_roles:
+                if account_type != "APPLICANT":
+                    raise AuthenticationFailed("Not an applicant account")
+            else:
+                if account_type != "HR":
+                    raise AuthenticationFailed("Not an HR account")
+
+                logging.getLogger(__name__).info(
+                    "HR login attempt",
+                    extra={
+                        "username": getattr(user, "username", None),
+                        "resolved_account_type": account_type,
+                        "raw_role": role,
+                        "raw_user_type": user_type,
+                    },
+                )
+
                 hr_role = None
                 if user.groups.filter(name="HR Recruiter").exists():
                     hr_role = "hr_recruiter"
@@ -76,12 +93,8 @@ class LoginView(generics.GenericAPIView):
                 elif user.groups.filter(name="IT Support").exists():
                     hr_role = "it_support"
 
-                if hr_role is None:
-                    return Response({"detail": "Access denied for this role."}, status=status.HTTP_403_FORBIDDEN)
-
-                effective_role = hr_role
-            else:
-                return Response({"detail": "Access denied for this role."}, status=status.HTTP_403_FORBIDDEN)
+                if hr_role is not None:
+                    effective_role = hr_role
         
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)

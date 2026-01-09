@@ -9,6 +9,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from .models import normalize_user_type
+from .utils import resolve_account_type
 
 
 APPLICANT_SECRET = settings.APPLICANT_SECRET
@@ -21,10 +22,9 @@ def validate_hr_access(user):
     if not user or not user.is_authenticated:
         return False
 
-    allowed_roles = ["hr_manager", "hr_recruiter"]
     if getattr(settings, "LOG_HR_AUTH", False):
         logging.getLogger(__name__).debug("HR auth check")
-    return normalize_user_type(getattr(user, "user_type", None)) in allowed_roles
+    return resolve_account_type(user) == "HR"
 
 
 def generate_applicant_token(applicant_id, expiry_hours=None):
