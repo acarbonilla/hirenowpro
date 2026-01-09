@@ -7,7 +7,7 @@ import { getHRToken } from "@/lib/auth-hr";
 import { authAPI } from "@/lib/api";
 import { Plus, Edit2, Trash2, Save, X, Briefcase } from "lucide-react";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 interface Position {
   id: number;

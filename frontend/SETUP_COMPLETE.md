@@ -30,7 +30,7 @@ frontend/
 
 ## 🌐 Development Server
 
-**Frontend is now running at:** http://localhost:3000
+**Frontend is now running at:** https://your-frontend-domain.example
 
 ### Features on Homepage:
 
@@ -43,7 +43,7 @@ frontend/
 
 The frontend is configured to connect to your Django backend:
 
-- **Backend API:** `http://localhost:8000/api`
+- **Backend API:** `https://your-backend-domain.example/api`
 - **Endpoints configured:** Applicants, Interviews, Questions
 - **File upload ready:** Multipart form data for videos
 
@@ -142,7 +142,7 @@ python manage.py test
 ### Environment Variables (.env.local)
 
 ```env
-NEXT_PUBLIC_API_URL=http://localhost:8000/api
+NEXT_PUBLIC_API_URL=https://your-backend-domain.example/api
 NEXT_PUBLIC_APP_NAME=HireNowPro
 NEXT_PUBLIC_MAX_VIDEO_DURATION=120
 ```
@@ -183,7 +183,7 @@ Dependencies installed for video recording:
 
 ## ✨ What You Can Do Now
 
-1. **View Homepage:** Open http://localhost:3000
+1. **View Homepage:** Open https://your-frontend-domain.example
 2. **Test Backend Connection:** Backend should be running on port 8000
 3. **Start Building Pages:** Registration page is the logical next step
 4. **Customize Design:** Modify colors/spacing in Tailwind config

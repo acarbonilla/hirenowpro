@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 interface TokenStats {
   total_requests: number;

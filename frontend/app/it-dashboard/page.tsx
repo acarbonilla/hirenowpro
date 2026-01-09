@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 import axios from "axios";
 import { getHRToken, normalizeUserType } from "@/lib/auth-hr";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+const ADMIN_URL = API_BASE_URL ? API_BASE_URL.replace(/\/api\/?$/, "") + "/admin/" : "/admin/";
 
 interface TokenStats {
   total_requests: number;
@@ -275,7 +276,7 @@ export default function ITDashboard() {
             </a>
 
             <a
-              href="http://localhost:8000/admin/"
+              href={ADMIN_URL}
               target="_blank"
               rel="noopener noreferrer"
               className="block bg-white border-2 border-gray-200 rounded-xl p-6 hover:border-green-500 transition-colors"

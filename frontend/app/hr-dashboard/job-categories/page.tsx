@@ -6,7 +6,7 @@ import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
 import { authAPI } from "@/lib/api";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 interface JobCategory {
   id: number;

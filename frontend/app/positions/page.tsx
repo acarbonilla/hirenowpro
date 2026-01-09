@@ -19,7 +19,7 @@ import type { JobPosition } from "@/types";
 import PositionDetailModal from "@/components/PositionDetailModal";
 import { formatSalaryDisplay } from "@/lib/salary";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 const iconMap: Record<string, React.ComponentType<LucideProps>> = {
   "virtual-assistant": Headset,

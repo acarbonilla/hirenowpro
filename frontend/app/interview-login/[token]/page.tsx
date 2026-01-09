@@ -17,7 +17,7 @@ export default function InterviewMagicLoginPage() {
     const validate = async () => {
       try {
         // Call backend directly to avoid Next.js /api 308 redirects aborting the XHR.
-        const apiBase = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+        const apiBase = process.env.NEXT_PUBLIC_API_URL;
         const res = await axios.get(`${apiBase}/applicant/magic-login/${token}/`, {
           validateStatus: () => true,
         });
