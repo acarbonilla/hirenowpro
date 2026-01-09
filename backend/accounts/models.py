@@ -1,5 +1,6 @@
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from core.roles import normalize_user_type as canonicalize_user_type
 
 ROLE_GROUP_MAP = {
     "hr_manager": "HR Manager",
@@ -10,11 +11,10 @@ ROLE_GROUP_MAP = {
 
 
 def normalize_user_type(value):
-    if value is None:
+    canonical = canonicalize_user_type(value)
+    if not canonical:
         return None
-    if isinstance(value, str):
-        return value.strip().lower()
-    return str(value).strip().lower()
+    return canonical.lower()
 
 
 class User(AbstractUser):

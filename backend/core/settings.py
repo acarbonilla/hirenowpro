@@ -191,6 +191,8 @@ REST_FRAMEWORK = {
         'registration_daily': '10/day',
         'login_ip': '10/min',
         'login_user': '5/min',
+        'anon': '50/min',
+        'user': '100/min',
     },
 }
 

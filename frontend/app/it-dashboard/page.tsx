@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
-import { getHRToken } from "@/lib/auth-hr";
+import { getHRToken, normalizeUserType } from "@/lib/auth-hr";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
 
@@ -57,9 +57,11 @@ export default function ITDashboard() {
       });
 
       const permissions: UserPermissions = authRes.data.permissions;
+      const userType = normalizeUserType(authRes.data?.user_type || authRes.data?.user?.user_type);
+      const itPortalUserTypes = new Set(["IT_SUPPORT", "SUPERADMIN"]);
 
       // Only IT Support can access this page
-      if (!permissions.is_it_support && !permissions.is_superuser) {
+      if (!itPortalUserTypes.has(userType)) {
         setError("Access denied. IT Support role required.");
         setTimeout(() => router.push("/hr-dashboard"), 2000);
         return;

@@ -51,12 +51,12 @@ class JobCategoryViewSet(viewsets.ModelViewSet):
     queryset = PositionType.objects.all().order_by('order', 'name')
     serializer_class = JobCategorySerializer
     permission_classes = [IsAuthenticated, RolePermission]
-    required_roles = ["HR_MANAGER"]
+    required_user_types = ["HR_MANAGER"]
 
     def get_permissions(self):
         if self.action in ["list", "retrieve"]:
-            return [IsAuthenticated(), RolePermission(required_roles=["HR_MANAGER", "HR_RECRUITER"])]
-        return [IsAuthenticated(), RolePermission(required_roles=["HR_MANAGER"])]
+            return [IsAuthenticated(), RolePermission(required_user_types=["HR_MANAGER", "HR_RECRUITER"])]
+        return [IsAuthenticated(), RolePermission(required_user_types=["HR_MANAGER"])]
 
     def get_queryset(self):
         """Filter to active types only if requested"""
@@ -88,7 +88,7 @@ class JobPositionViewSet(viewsets.ModelViewSet):
         """
         if self.action in ["list", "retrieve"]:
             return [PublicOrHRManager()]
-        return [IsAuthenticated(), IsHRUser(), RolePermission(required_roles=["HR_RECRUITER"])]
+        return [IsAuthenticated(), IsHRUser(), RolePermission(required_user_types=["HR_RECRUITER"])]
 
     def get_serializer_class(self):
         if self.action in ["list", "retrieve"]:
@@ -129,7 +129,7 @@ class QuestionTypeViewSet(viewsets.ModelViewSet):
     queryset = QuestionType.objects.all().order_by('order', 'name')
     serializer_class = QuestionTypeSerializer
     permission_classes = [IsAuthenticated, RolePermission]
-    required_roles = ["HR_MANAGER"]
+    required_user_types = ["HR_MANAGER"]
     
     def get_queryset(self):
         """Filter to active types only if requested"""
@@ -205,7 +205,7 @@ class InterviewQuestionViewSet(viewsets.ModelViewSet):
     queryset = InterviewQuestion.objects.select_related('question_type', 'position_type', 'category').filter(is_active=True).order_by('order')
     serializer_class = InterviewQuestionSerializer
     permission_classes = [IsAuthenticated, RolePermission]
-    required_roles = ["HR_MANAGER"]
+    required_user_types = ["HR_MANAGER"]
     
     def get_serializer_class(self):
         if self.action in ["create", "update", "partial_update"]:

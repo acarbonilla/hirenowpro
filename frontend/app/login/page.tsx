@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { authAPI } from "@/lib/api";
-import { setHRAuth, clearHRAuth } from "@/lib/auth-hr";
+import { setHRAuth, clearHRAuth, normalizeUserType } from "@/lib/auth-hr";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -30,10 +30,11 @@ export default function LoginPage() {
 
       // Validate HR access
       const authCheck = await authAPI.checkAuth();
-      const perms = authCheck.data?.permissions || {};
-      const userType = authCheck.data?.user_type || authCheck.data?.user?.user_type || user?.user_type;
-      const isHR =
-        perms.is_hr_recruiter || perms.is_hr_manager || perms.is_superuser || userType?.startsWith("hr_");
+      const userType = normalizeUserType(
+        authCheck.data?.user_type || authCheck.data?.user?.user_type || user?.user_type
+      );
+      const hrPortalUserTypes = new Set(["HR_MANAGER", "HR_RECRUITER", "ADMIN", "SUPERADMIN"]);
+      const isHR = hrPortalUserTypes.has(userType);
 
       if (!isHR) {
         clearHRAuth();

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authAPI } from "@/lib/api";
-import { setHRAuth } from "@/lib/auth-hr";
+import { setHRAuth, normalizeUserType } from "@/lib/auth-hr";
 
 export default function HRLoginPage() {
   const router = useRouter();
@@ -43,10 +43,13 @@ export default function HRLoginPage() {
 
       // Check user permissions
       const authCheckResponse = await authAPI.checkAuth();
-      const permissions = authCheckResponse.data.permissions;
+      const userType = normalizeUserType(
+        authCheckResponse.data?.user_type || authCheckResponse.data?.user?.user_type || user?.user_type
+      );
+      const hrPortalUserTypes = new Set(["HR_MANAGER", "HR_RECRUITER", "ADMIN", "SUPERADMIN"]);
 
-      // Verify HR access (not IT Support)
-      if (!permissions.is_hr_recruiter && !permissions.is_hr_manager && !permissions.is_superuser) {
+      // Verify HR access (exclude IT Support)
+      if (!hrPortalUserTypes.has(userType)) {
         setError("Access denied. This portal is for HR staff only. IT Support should use the IT Portal.");
         setLoading(false);
         return;

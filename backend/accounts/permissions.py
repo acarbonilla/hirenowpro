@@ -1,6 +1,6 @@
 from rest_framework.permissions import BasePermission
 from common.permissions import IsHRUser as PermissionBasedIsHRUser
-from .models import normalize_user_type
+from core.roles import normalize_user_type
 
 
 def _user_type(user):
@@ -18,25 +18,25 @@ class IsApplicant(BasePermission):
 
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "applicant")
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "APPLICANT")
 
 
 class IsHRManager(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "hr_manager")
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "HR_MANAGER")
 
 
 class IsHRRecruiter(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "hr_recruiter")
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "HR_RECRUITER")
 
 
 class IsITSupport(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "it_support")
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) == "IT_SUPPORT")
 
 
 class HRPermission(BasePermission):
@@ -44,7 +44,7 @@ class HRPermission(BasePermission):
     Allows HR Manager / HR Recruiter / IT Support roles.
     """
 
-    allowed = {"hr_manager", "hr_recruiter", "it_support"}
+    allowed = {"HR_MANAGER", "HR_RECRUITER", "IT_SUPPORT", "ADMIN", "SUPERADMIN"}
 
     def has_permission(self, request, view):
         user = request.user
@@ -53,16 +53,19 @@ class HRPermission(BasePermission):
 
 class RolePermission(BasePermission):
     """
-    Generic role-based permission. Use as RolePermission(required_roles=[...])
-    or set view.required_roles = [...].
-    Accepts role match (case-insensitive), or staff/superuser override.
+    Generic user_type-based permission. Use as RolePermission(required_user_types=[...])
+    or set view.required_user_types = [...].
+    Accepts canonical user_type match, or staff/superuser override.
     """
 
-    def __init__(self, required_roles=None):
+    def __init__(self, required_roles=None, required_user_types=None):
         self.required_roles = required_roles or []
+        self.required_user_types = required_user_types or []
 
     def has_permission(self, request, view):
-        required_roles = self.required_roles or getattr(view, "required_roles", []) or []
+        required_user_types = self.required_user_types or getattr(view, "required_user_types", []) or []
+        if not required_user_types:
+            required_user_types = self.required_roles or getattr(view, "required_roles", []) or []
         user = request.user
         if not (user and getattr(user, "is_authenticated", False)):
             return False
@@ -70,18 +73,10 @@ class RolePermission(BasePermission):
         if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
             return True
 
-        normalized_role = _effective_role(user)
-        normalized_role_upper = normalized_role.upper() if normalized_role else None
-        required_upper = [r.upper() for r in required_roles]
+        normalized_user_type = _effective_role(user)
+        required_set = {normalize_user_type(r) for r in required_user_types}
 
-        if normalized_role_upper and normalized_role_upper in required_upper:
-            return True
-
-        try:
-            groups = [g.upper().replace(" ", "_") for g in user.groups.values_list("name", flat=True)]
-            return any(g in required_upper for g in groups)
-        except Exception:
-            return False
+        return bool(normalized_user_type and normalized_user_type in required_set)
 
 
 class PublicOrHRManager(BasePermission):
@@ -89,7 +84,7 @@ class PublicOrHRManager(BasePermission):
     Allow public/applicant access, but restrict authenticated HR access to HR staff roles.
     """
 
-    allowed_roles = {"hr_manager", "hr_recruiter", "admin", "superadmin", "applicant"}
+    allowed_roles = {"HR_MANAGER", "HR_RECRUITER", "ADMIN", "SUPERADMIN", "APPLICANT"}
 
     def has_permission(self, request, view):
         user = request.user
@@ -109,16 +104,16 @@ class ApplicantOrHR(BasePermission):
         user = request.user
         if not user:
             return False
-        if getattr(user, "is_authenticated", False) and _effective_role(user) == "applicant":
+        if getattr(user, "is_authenticated", False) and _effective_role(user) == "APPLICANT":
             return True
-        return bool(_effective_role(user) in ["hr_manager", "hr_recruiter", "it_support", "admin", "superadmin"] or getattr(user, "is_staff", False))
+        return bool(_effective_role(user) in ["HR_MANAGER", "HR_RECRUITER", "IT_SUPPORT", "ADMIN", "SUPERADMIN"] or getattr(user, "is_staff", False))
 
 
 # Backwards-compat aliases used elsewhere
 class IsAdmin(BasePermission):
     def has_permission(self, request, view):
         user = request.user
-        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) in ["admin", "superadmin"])
+        return bool(user and getattr(user, "is_authenticated", False) and _effective_role(user) in ["ADMIN", "SUPERADMIN"])
 
 
 class IsSuperAdmin(BasePermission):

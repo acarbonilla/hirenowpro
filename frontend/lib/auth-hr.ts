@@ -18,6 +18,32 @@ export interface AuthTokens {
   refresh: string;
 }
 
+export const HR_USER_TYPES = new Set(["HR_MANAGER", "HR_RECRUITER", "IT_SUPPORT", "ADMIN", "SUPERADMIN"]);
+export const HR_MANAGER_USER_TYPES = new Set(["HR_MANAGER", "ADMIN", "SUPERADMIN"]);
+
+const LEGACY_USER_TYPE_MAP: Record<string, string> = {
+  applicant: "APPLICANT",
+  hr_manager: "HR_MANAGER",
+  hr_recruiter: "HR_RECRUITER",
+  it_support: "IT_SUPPORT",
+  admin: "ADMIN",
+  superadmin: "SUPERADMIN",
+  super_admin: "SUPERADMIN",
+  hr_admin: "ADMIN",
+  system_admin: "ADMIN",
+  recruiter: "HR_RECRUITER",
+};
+
+export function normalizeUserType(value?: string) {
+  const raw = (value || "").trim();
+  if (!raw) return "";
+  const key = raw.toLowerCase();
+  if (LEGACY_USER_TYPE_MAP[key]) {
+    return LEGACY_USER_TYPE_MAP[key];
+  }
+  return raw.toUpperCase();
+}
+
 function clearLegacyTokens() {
   localStorage.removeItem("access_token");
   localStorage.removeItem("authToken");
@@ -100,8 +126,7 @@ export function isHRRole(): boolean {
   const user = getHRUser();
   if (!user) return false;
 
-  const hrRoles = ["hr_admin", "system_admin", "recruiter"];
-  return hrRoles.includes(user.user_type) || hrRoles.includes(user.role || "");
+  return HR_USER_TYPES.has(normalizeUserType(user.user_type));
 }
 
 /**
@@ -111,8 +136,7 @@ export function isHRManager(): boolean {
   const user = getHRUser();
   if (!user) return false;
 
-  const managerRoles = ["hr_admin", "hr_manager", "system_admin"];
-  return managerRoles.includes(user.user_type) || managerRoles.includes(user.role || "");
+  return HR_MANAGER_USER_TYPES.has(normalizeUserType(user.user_type));
 }
 
 /**

@@ -8,8 +8,7 @@ from datetime import datetime, timedelta
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.contrib.auth import get_user_model
 from django.utils import timezone
-from .models import normalize_user_type
-from .utils import resolve_account_type
+from core.roles import normalize_user_type, is_hr_user_type
 
 
 APPLICANT_SECRET = settings.APPLICANT_SECRET
@@ -24,7 +23,7 @@ def validate_hr_access(user):
 
     if getattr(settings, "LOG_HR_AUTH", False):
         logging.getLogger(__name__).debug("HR auth check")
-    return resolve_account_type(user) == "HR"
+    return is_hr_user_type(normalize_user_type(getattr(user, "user_type", None)))
 
 
 def generate_applicant_token(applicant_id, expiry_hours=None):
@@ -175,8 +174,6 @@ class HRTokenAuthentication(JWTAuthentication):
     JWT authentication that only allows HR roles.
     """
 
-    allowed_roles = {"hr_manager", "hr_recruiter", "it_support"}
-
     def authenticate(self, request):
         res = super().authenticate(request)
         if not res:
@@ -196,4 +193,6 @@ class HRTokenAuthentication(JWTAuthentication):
                 "User type mismatch in token",
                 extra={"user_id": getattr(user, "id", None), "user_type": user_type, "token_user_type": effective_claim},
             )
+        if not is_hr_user_type(user_type):
+            raise AuthenticationFailed("Not an HR account")
         return (user, token)

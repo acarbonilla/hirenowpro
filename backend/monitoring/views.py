@@ -70,7 +70,7 @@ class TokenUsageViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = TokenUsage.objects.all()
     serializer_class = TokenUsageSerializer
     permission_classes = [IsAuthenticated, RolePermission]
-    required_roles = ["HR_MANAGER", "IT_SUPPORT"]
+    required_user_types = ["HR_MANAGER", "IT_SUPPORT"]
     
     def get_queryset(self):
         """Filter based on query parameters"""
@@ -232,4 +232,4 @@ class DailyTokenSummaryViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = DailyTokenSummary.objects.all()
     serializer_class = DailyTokenSummarySerializer
     permission_classes = [IsAuthenticated, RolePermission]
-    required_roles = ["HR_MANAGER", "IT_SUPPORT"]
+    required_user_types = ["HR_MANAGER", "IT_SUPPORT"]

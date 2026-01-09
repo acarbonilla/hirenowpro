@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authAPI } from "@/lib/api";
-import { setHRAuth } from "@/lib/auth-hr";
+import { setHRAuth, normalizeUserType } from "@/lib/auth-hr";
 
 export default function ITLoginPage() {
   const router = useRouter();
@@ -28,10 +28,13 @@ export default function ITLoginPage() {
 
       // Check user permissions
       const authCheckResponse = await authAPI.checkAuth();
-      const permissions = authCheckResponse.data.permissions;
+      const userType = normalizeUserType(
+        authCheckResponse.data?.user_type || authCheckResponse.data?.user?.user_type || user?.user_type
+      );
+      const itPortalUserTypes = new Set(["IT_SUPPORT", "SUPERADMIN"]);
 
       // Verify IT Support access
-      if (!permissions.is_it_support && !permissions.is_superuser) {
+      if (!itPortalUserTypes.has(userType)) {
         setError("Access denied. This portal is for IT Support staff only.");
         setLoading(false);
         return;

@@ -13,8 +13,8 @@ from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.contrib.auth import logout
-from .models import User, normalize_user_type
-from .utils import resolve_account_type
+from .models import User
+from core.roles import normalize_user_type, is_hr_user_type
 from common.throttles import (
     RegistrationHourlyThrottle,
     RegistrationDailyThrottle,
@@ -55,52 +55,29 @@ class LoginView(generics.GenericAPIView):
         role = getattr(user, "role", None)
         normalized_user_type = normalize_user_type(user_type)
         normalized_role = normalize_user_type(role)
-        effective_role = normalized_user_type
-        if normalized_role and effective_role and normalized_role != effective_role:
+        effective_user_type = normalized_user_type
+        if normalized_role and effective_user_type and normalized_role != effective_user_type:
             logging.getLogger(__name__).warning(
                 "User role mismatch on login",
                 extra={"user_id": getattr(user, "id", None), "user_type": user_type, "role": role},
             )
-
-        account_type = resolve_account_type(user)
         allowed_roles = None
         if self.allowed_roles is not None:
-            allowed_roles = {(role or "").upper() for role in self.allowed_roles}
+            allowed_roles = {normalize_user_type(role) for role in self.allowed_roles}
 
         if allowed_roles is not None:
             if "APPLICANT" in allowed_roles:
-                if account_type != "APPLICANT":
+                if normalized_user_type != "APPLICANT":
                     raise AuthenticationFailed("Not an applicant account")
             else:
-                if account_type != "HR":
+                if not is_hr_user_type(normalized_user_type):
                     raise AuthenticationFailed("Not an HR account")
 
-                logging.getLogger(__name__).info(
-                    "HR login attempt",
-                    extra={
-                        "username": getattr(user, "username", None),
-                        "resolved_account_type": account_type,
-                        "raw_role": role,
-                        "raw_user_type": user_type,
-                    },
-                )
-
-                hr_role = None
-                if user.groups.filter(name="HR Recruiter").exists():
-                    hr_role = "hr_recruiter"
-                elif user.groups.filter(name="HR Manager").exists():
-                    hr_role = "hr_manager"
-                elif user.groups.filter(name="IT Support").exists():
-                    hr_role = "it_support"
-
-                if hr_role is not None:
-                    effective_role = hr_role
-        
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
         # Embed useful claims for frontend/permissions
-        refresh["user_type"] = user_type
-        refresh["role"] = effective_role
+        refresh["user_type"] = normalized_user_type
+        refresh["role"] = normalized_user_type
         refresh["is_staff"] = user.is_staff
         refresh["is_superuser"] = user.is_superuser
         refresh["email"] = user.email
@@ -158,7 +135,7 @@ class RegisterView(generics.CreateAPIView):
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
         user_type = getattr(user, "user_type", None)
-        refresh["user_type"] = user_type
+        refresh["user_type"] = normalize_user_type(user_type)
         refresh["role"] = normalize_user_type(user_type)
         refresh["is_staff"] = user.is_staff
         refresh["is_superuser"] = user.is_superuser
@@ -211,14 +188,14 @@ def check_auth(request):
     user = request.user
     groups = list(user.groups.values_list('name', flat=True))
     user_type = getattr(user, "user_type", None)
-    role = normalize_user_type(user_type)
+    canonical_user_type = normalize_user_type(user_type)
     
     can_view_system_analytics = (
         'HR Manager' in groups
         or 'Lead Recruiter' in groups
         or 'System Owner' in groups
         or user.is_superuser
-        or role in ['admin', 'superadmin', 'hr_manager']
+        or canonical_user_type in ["ADMIN", "SUPERADMIN", "HR_MANAGER"]
     )
     can_view_recruiter_insights = (
         'HR Recruiter' in groups
@@ -230,14 +207,14 @@ def check_auth(request):
         'authenticated': True,
         'user': UserSerializer(user).data,
         'groups': groups,
-        'user_type': user_type,
+        'user_type': canonical_user_type,
         'permissions': {
-            'is_hr_recruiter': 'HR Recruiter' in groups,
-            'is_hr_manager': 'HR Manager' in groups,
-            'is_it_support': 'IT Support' in groups,
+            'is_hr_recruiter': 'HR Recruiter' in groups or canonical_user_type == "HR_RECRUITER",
+            'is_hr_manager': 'HR Manager' in groups or canonical_user_type == "HR_MANAGER",
+            'is_it_support': 'IT Support' in groups or canonical_user_type == "IT_SUPPORT",
             'is_staff': user.is_staff,
             'is_superuser': user.is_superuser,
-            'role': role,
+            'role': canonical_user_type,
             'can_view_recruiter_insights': can_view_recruiter_insights,
             'can_view_system_analytics': can_view_system_analytics,
         }
@@ -262,4 +239,4 @@ class HRUserViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ["list", "retrieve"]:
             return [IsAuthenticated(), IsHRUser()]
-        return [IsAuthenticated(), IsHRUser(), RolePermission(required_roles=["HR_MANAGER"])]
+        return [IsAuthenticated(), IsHRUser(), RolePermission(required_user_types=["HR_MANAGER"])]

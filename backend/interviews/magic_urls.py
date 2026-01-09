@@ -10,6 +10,7 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 
 from accounts.authentication import (
     APPLICANT_SECRET,
@@ -36,6 +37,7 @@ class MagicLoginView(APIView):
 
     authentication_classes = []
     permission_classes = []
+    throttle_classes = [AnonRateThrottle, UserRateThrottle]
 
     def get(self, request, token):
         logger.info("Magic login hit", extra={"remote_addr": request.META.get("REMOTE_ADDR")})
@@ -192,7 +194,7 @@ class RefreshApplicantTokenView(APIView):
 
     authentication_classes = []
     permission_classes = [IsAuthenticated, RolePermission]
-    required_roles = ["HR", "ADMIN", "SUPERADMIN"]
+    required_user_types = ["HR_MANAGER", "HR_RECRUITER", "IT_SUPPORT", "ADMIN", "SUPERADMIN"]
 
     def post(self, request):
         applicant_id = request.data.get("applicant_id")
@@ -216,7 +218,7 @@ class HRResendInterviewLinkView(APIView):
     """
 
     permission_classes = [IsAuthenticated, RolePermission]
-    required_roles = ["HR", "ADMIN", "SUPERADMIN"]
+    required_user_types = ["HR_MANAGER", "HR_RECRUITER", "IT_SUPPORT", "ADMIN", "SUPERADMIN"]
 
     def post(self, request, applicant_id):
         applicant = Applicant.objects.filter(id=applicant_id).first()
@@ -251,6 +253,7 @@ class QRLoginView(APIView):
 
     authentication_classes = []
     permission_classes = []
+    throttle_classes = [AnonRateThrottle, UserRateThrottle]
 
     def get(self, request, token):
         try:
@@ -296,7 +299,7 @@ class HRGenerateQRView(APIView):
     """
 
     permission_classes = [IsAuthenticated, RolePermission]
-    required_roles = ["HR", "ADMIN", "SUPERADMIN"]
+    required_user_types = ["HR_MANAGER", "HR_RECRUITER", "IT_SUPPORT", "ADMIN", "SUPERADMIN"]
 
     def post(self, request, applicant_id):
         applicant = Applicant.objects.filter(id=applicant_id).first()
@@ -322,7 +325,7 @@ class HRResendQRView(APIView):
     """
 
     permission_classes = [IsAuthenticated, RolePermission]
-    required_roles = ["HR", "ADMIN", "SUPERADMIN"]
+    required_user_types = ["HR_MANAGER", "HR_RECRUITER", "IT_SUPPORT", "ADMIN", "SUPERADMIN"]
 
     def post(self, request, applicant_id):
         applicant = Applicant.objects.filter(id=applicant_id).first()

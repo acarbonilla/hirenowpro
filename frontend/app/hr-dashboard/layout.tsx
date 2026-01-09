@@ -3,7 +3,14 @@
 import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
-import { clearHRAuth, getHRUser, isHRAuthenticated } from "@/lib/auth-hr";
+import {
+  clearHRAuth,
+  getHRUser,
+  isHRAuthenticated,
+  HR_USER_TYPES,
+  HR_MANAGER_USER_TYPES,
+  normalizeUserType,
+} from "@/lib/auth-hr";
 import { authAPI } from "@/lib/api";
 
 export default function HRDashboardLayout({ children }: { children: React.ReactNode }) {
@@ -11,6 +18,7 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
   const pathname = usePathname();
   const [user, setUser] = useState<any>(null);
   const [permissions, setPermissions] = useState<any>(null);
+  const [canonicalUserType, setCanonicalUserType] = useState<string>("");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [isForbidden, setIsForbidden] = useState(false);
@@ -29,22 +37,24 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
     try {
       const authRes = await authAPI.checkAuth();
       const perms = authRes.data.permissions;
-      const userType = authRes.data?.user_type || authRes.data?.user?.user_type || getHRUser()?.user_type;
+      const userType = normalizeUserType(
+        authRes.data?.user_type || authRes.data?.user?.user_type || getHRUser()?.user_type
+      );
 
       // Block non-HR tokens from reaching HR pages
-      if (!userType?.startsWith("hr_") && !perms.is_hr_recruiter && !perms.is_hr_manager && !perms.is_superuser) {
+      if (!HR_USER_TYPES.has(userType)) {
         clearHRAuth();
         router.push("/hr-login");
         return;
       }
 
-      const isITSupportOnly = perms.is_it_support && !perms.is_hr_manager && !perms.is_hr_recruiter && !perms.is_superuser;
+      const isITSupportOnly = userType === "IT_SUPPORT";
       if (isITSupportOnly && !pathname.startsWith("/hr-dashboard/token-monitoring")) {
         router.push("/it-dashboard");
         return;
       }
 
-      if (!perms.is_hr_recruiter && !perms.is_hr_manager && !perms.is_superuser) {
+      if (!HR_USER_TYPES.has(userType)) {
         router.push("/hr-login");
         return;
       }
@@ -59,12 +69,13 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
       const isManagerRoute = restrictedManagerPaths.some(
         (route) => pathname === route || pathname.startsWith(`${route}/`)
       );
-      const canAccessManagerRoutes = perms.is_hr_manager || perms.is_superuser;
+      const canAccessManagerRoutes = HR_MANAGER_USER_TYPES.has(userType);
       setIsForbidden(isManagerRoute && !canAccessManagerRoutes);
 
       const userData = getHRUser();
       setUser(userData);
       setPermissions(perms);
+      setCanonicalUserType(userType);
       setLoading(false);
     } catch (error) {
       console.error("Access check error:", error);
@@ -143,10 +154,10 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
   const tokenMonitoringItem: NavItem = { type: "link", name: "Token Monitoring", href: "/hr-dashboard/token-monitoring", icon: "TOK" };
 
   const buildNavigation = () => {
-    const isHRManagerRole = permissions?.is_hr_manager || permissions?.is_superuser;
-    const isHRRecruiterRole = permissions?.is_hr_recruiter;
+    const isHRManagerRole = HR_MANAGER_USER_TYPES.has(canonicalUserType);
+    const isHRRecruiterRole = canonicalUserType === "HR_RECRUITER";
     const isHRStaffRole = isHRManagerRole || isHRRecruiterRole;
-    const isITSupportOnly = permissions?.is_it_support && !isHRStaffRole && !permissions?.is_superuser;
+    const isITSupportOnly = canonicalUserType === "IT_SUPPORT";
 
     if (isITSupportOnly) {
       return [tokenMonitoringItem];
@@ -159,7 +170,7 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
       items.push(...managerToolsNavigation);
     }
 
-    if (permissions?.is_hr_manager || permissions?.is_it_support || permissions?.is_superuser) {
+    if (HR_MANAGER_USER_TYPES.has(canonicalUserType) || canonicalUserType === "IT_SUPPORT") {
       const analyticsIndex = items.findIndex(
         (item) => item.type === "link" && item.href === "/hr-dashboard/analytics"
       );
