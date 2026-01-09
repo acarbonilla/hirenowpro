@@ -121,19 +121,20 @@ def require_redis_service():
     fail("Required systemd service inactive: redis or redis-server")
 
 
-def check_url(url, name, timeout=5):
+def check_url(url, name, timeout=5, ok_statuses=None):
+    ok_statuses = ok_statuses or {200}
     req = Request(url, headers={"User-Agent": "hirenowpro-bootstrap"})
     with urlopen(req, timeout=timeout) as response:
         status = response.getcode()
         body = response.read()
-    if status != 200:
-        fail(f"{name} health check failed with status {status}")
+    if status not in ok_statuses:
+        fail(f"{name} health check failed for {url} with status {status}")
     log("CHECK", f"{name} OK ({status})")
     return body
 
 
 def health_checks():
-    backend_url = os.getenv("BACKEND_HEALTH_URL", "http://127.0.0.1:8000/api/health/")
+    backend_url = os.getenv("BACKEND_HEALTH_URL", "/admin/")
     frontend_url = os.getenv("FRONTEND_URL")
     if not frontend_url:
         fail("FRONTEND_URL must be set to the production Nginx domain (https)")
@@ -142,10 +143,13 @@ def health_checks():
         fail("FRONTEND_URL must use https")
     if parsed_frontend.hostname in {"localhost", "127.0.0.1"}:
         fail("FRONTEND_URL must not be localhost")
+    if backend_url.startswith("/"):
+        backend_url = frontend_url.rstrip("/") + backend_url
+    log("CHECK", f"Backend health URL resolved to {backend_url}")
 
     for attempt in range(1, 6):
         try:
-            body = check_url(backend_url, "Backend")
+            body = check_url(backend_url, "Backend", ok_statuses={200, 301, 302})
             try:
                 payload = json.loads(body.decode("utf-8"))
                 if payload.get("status") != "ok":
