@@ -129,6 +129,23 @@ class IsHRUser(PermissionBasedIsHRUser):
     pass
 
 
+class IsHRManagerOnly(BasePermission):
+    """
+    Allow access only to HR_MANAGER, ADMIN, SUPERADMIN.
+    """
+
+    allowed_roles = {"HR_MANAGER", "ADMIN", "SUPERADMIN"}
+
+    def has_permission(self, request, view):
+        user = request.user
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
+        if getattr(user, "is_superuser", False):
+            return True
+        role = normalize_user_type(getattr(user, "user_type", None))
+        return role in self.allowed_roles
+
+
 class IsApplicantUser(IsApplicant):
     """
     Alias for applicant-only permission.

@@ -28,7 +28,7 @@ from .serializers import (
     ChangePasswordSerializer,
     HRUserWriteSerializer
 )
-from .permissions import IsApplicant, IsAdmin, IsSuperAdmin, IsHRUser, RolePermission
+from .permissions import IsApplicant, IsAdmin, IsSuperAdmin, IsHRUser, RolePermission, IsHRManagerOnly
 from .authentication import HRTokenAuthentication
 
 
@@ -226,7 +226,7 @@ class HRUserViewSet(viewsets.ModelViewSet):
     HR-only user list for dashboard usage.
     """
 
-    permission_classes = [IsAuthenticated, IsHRUser]
+    permission_classes = [IsAuthenticated, IsHRManagerOnly]
     authentication_classes = [HRTokenAuthentication, *api_settings.DEFAULT_AUTHENTICATION_CLASSES]
     serializer_class = UserSerializer
     queryset = User.objects.all()
@@ -237,6 +237,4 @@ class HRUserViewSet(viewsets.ModelViewSet):
         return UserSerializer
 
     def get_permissions(self):
-        if self.action in ["list", "retrieve"]:
-            return [IsAuthenticated(), IsHRUser()]
-        return [IsAuthenticated(), IsHRUser(), RolePermission(required_user_types=["HR_MANAGER"])]
+        return [IsAuthenticated(), IsHRManagerOnly()]

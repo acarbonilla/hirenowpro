@@ -15,7 +15,6 @@ ROOT = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=ROOT / ".env")
 BACKEND_DIR = ROOT / "backend"
 FRONTEND_DIR = ROOT / "frontend"
-LOG_DIR = ROOT / "logs"
 BOOTSTRAP_MARKER = ROOT / ".bootstrapped"
 
 REQUIRED_ENV = [
@@ -54,9 +53,6 @@ def require_cmd(name):
 
 
 def check_env_vars():
-    check_process_tools()
-    require_cmd("node")
-
     missing = [key for key in REQUIRED_ENV if not os.getenv(key)]
     if missing:
         fail(f"Missing required env vars: {', '.join(missing)}")
@@ -67,13 +63,6 @@ def check_env_vars():
             fail("Missing DATABASE_URL or DB_* vars: " + ", ".join(missing_db))
 
     log("CHECK", "Environment variables OK")
-
-
-def check_process_tools():
-    if shutil.which("pgrep") or shutil.which("ps"):
-        log("CHECK", "Process discovery available")
-        return
-    fail("Required command not found: pgrep or ps")
 
 
 def parse_host_port_from_url(url, default_port):
@@ -115,99 +104,21 @@ def run_cmd(cmd, cwd=None, check=True, capture=False):
     return subprocess.run(cmd, cwd=cwd, check=check)
 
 
-def ensure_dirs():
-    LOG_DIR.mkdir(exist_ok=True)
-
-
-def pgrep(pattern):
-    if shutil.which("pgrep"):
-        result = subprocess.run(["pgrep", "-f", pattern], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        if result.returncode != 0:
-            return []
-        return [int(pid) for pid in result.stdout.strip().split() if pid.strip().isdigit()]
-
-    if not shutil.which("ps"):
-        fail("Neither pgrep nor ps available for process discovery")
-
-    result = subprocess.run(["ps", "-eo", "pid,args"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-    lines = result.stdout.splitlines()
-    matches = []
-    for line in lines[1:]:
-        if pattern in line:
-            pid_str = line.strip().split(None, 1)[0]
-            if pid_str.isdigit():
-                matches.append(int(pid_str))
-    return matches
-
-
-def ensure_service_running(name, pattern, start_cmd, cwd=None, log_file=None):
-    pids = pgrep(pattern)
-    if pids:
-        log("SKIP", f"{name} already running (pid(s): {', '.join(map(str, pids))})")
-        return pids
-
-    log("START", f"Starting {name}")
-    stdout = None
-    stderr = None
-    if log_file:
-        log_path = LOG_DIR / log_file
-        stdout = open(log_path, "a", encoding="utf-8")
-        stderr = subprocess.STDOUT
-    process = subprocess.Popen(start_cmd, cwd=cwd, stdout=stdout, stderr=stderr)
-    log("START", f"{name} started (pid: {process.pid})")
-    return [process.pid]
-
-
-def start_redis():
-    if pgrep("redis-server"):
-        log("SKIP", "Redis already running")
-        return
-
-    if shutil.which("systemctl"):
-        result = subprocess.run(["systemctl", "is-active", "redis"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
-        if result.returncode == 0:
-            log("SKIP", "Redis service active")
-            return
-
-        for service in ["redis", "redis-server"]:
-            result = subprocess.run(["systemctl", "start", service])
-            if result.returncode == 0:
-                log("START", f"Started {service} via systemctl")
-                return
-
-    if shutil.which("redis-server"):
-        subprocess.run(["redis-server", "--daemonize", "yes"], check=True)
-        log("START", "Started redis-server daemon")
-        return
-
-    fail("Redis not running and no way to start it")
-
-
-def django_prep():
-    if not (BACKEND_DIR / "manage.py").exists():
-        fail("backend/manage.py not found")
-
-    run_cmd([sys.executable, "manage.py", "migrate"], cwd=str(BACKEND_DIR))
-    run_cmd([sys.executable, "manage.py", "collectstatic", "--noinput"], cwd=str(BACKEND_DIR))
-
-
-def ensure_next_build():
-    build_id = FRONTEND_DIR / ".next" / "BUILD_ID"
-    if build_id.exists():
-        log("SKIP", "Next.js build already present")
-        return
-
-    run_cmd(["npm", "run", "build"], cwd=str(FRONTEND_DIR))
-
-
-def reload_nginx():
+def require_systemd_service(service_name):
     if not shutil.which("systemctl"):
-        fail("systemctl not found for nginx reload")
-    try:
-        subprocess.run(["sudo", "systemctl", "reload", "nginx"], check=True)
-    except subprocess.CalledProcessError as exc:
-        fail(f"Failed to reload nginx (exit {exc.returncode})")
-    log("START", "nginx reloaded")
+        fail("systemctl not found for systemd validation")
+    result = subprocess.run(["systemctl", "is-active", "--quiet", service_name])
+    if result.returncode != 0:
+        fail(f"Required systemd service inactive: {service_name}")
+    log("CHECK", f"systemd service active: {service_name}")
+
+
+def require_redis_service():
+    for service in ["redis", "redis-server"]:
+        if subprocess.run(["systemctl", "is-active", "--quiet", service]).returncode == 0:
+            log("CHECK", f"systemd service active: {service}")
+            return
+    fail("Required systemd service inactive: redis or redis-server")
 
 
 def check_url(url, name, timeout=5):
@@ -223,7 +134,14 @@ def check_url(url, name, timeout=5):
 
 def health_checks():
     backend_url = os.getenv("BACKEND_HEALTH_URL", "http://127.0.0.1:8000/api/health/")
-    frontend_url = os.getenv("FRONTEND_URL", "http://127.0.0.1:3000/")
+    frontend_url = os.getenv("FRONTEND_URL")
+    if not frontend_url:
+        fail("FRONTEND_URL must be set to the production Nginx domain (https)")
+    parsed_frontend = urlparse(frontend_url)
+    if parsed_frontend.scheme != "https":
+        fail("FRONTEND_URL must use https")
+    if parsed_frontend.hostname in {"localhost", "127.0.0.1"}:
+        fail("FRONTEND_URL must not be localhost")
 
     for attempt in range(1, 6):
         try:
@@ -243,27 +161,49 @@ def health_checks():
     fail("Health checks failed")
 
 
+def check_celery_ping():
+    celery_app = os.getenv("CELERY_APP", "core")
+    result = run_cmd(["celery", "-A", celery_app, "inspect", "ping"], cwd=str(BACKEND_DIR), capture=True, check=False)
+    output = (result.stdout or "").strip()
+    if result.returncode != 0:
+        fail(f"Celery ping failed: {output or 'no output'}")
+    if "pong" not in output.lower():
+        fail(f"Celery ping returned no pong: {output or 'no output'}")
+    log("CHECK", "Celery workers responsive")
+
+
+def guard_production_env():
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        fail("Refusing to run as root")
+    if os.getenv("ENV") != "production":
+        fail("ENV=production is required for verification")
+
+
 def main():
-    log("BOOT", "HireNowPro bootstrap starting")
+    log("VERIFY", "HireNowPro production verification starting")
+    guard_production_env()
     if BOOTSTRAP_MARKER.exists() and os.getenv("FORCE_BOOTSTRAP") != "1":
-        log("SKIP", "Bootstrap already completed (set FORCE_BOOTSTRAP=1 to re-run)")
+        log("SKIP", "Verification already completed (set FORCE_BOOTSTRAP=1 to re-run)")
         sys.exit(0)
 
     check_python_version()
-    require_cmd("npm")
     require_cmd("systemctl")
+    require_cmd("celery")
 
     check_env_vars()
-    ensure_dirs()
-    start_redis()
+    require_redis_service()
+    require_systemd_service("gunicorn")
+    require_systemd_service("celery")
+    require_systemd_service("nginx")
+
     check_redis()
     check_postgres()
-    django_prep()
+    check_tcp_service("127.0.0.1", 8000, "Gunicorn")
+    check_celery_ping()
+    health_checks()
 
-    ensure_next_build()
-    reload_nginx()
     BOOTSTRAP_MARKER.touch()
-    log("DONE", "Bootstrap completed successfully")
+    log("DONE", "Production verification completed successfully")
 
 
 if __name__ == "__main__":
