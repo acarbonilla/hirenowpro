@@ -4,6 +4,7 @@ import time
 import requests
 import re
 from pathlib import Path
+from datetime import timedelta
 from django.conf import settings
 from django.http import HttpResponse
 from django.utils.dateparse import parse_datetime
@@ -267,13 +268,57 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         if existing_response:
             return Response({"error": "A response for this question already exists"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Normalize duration for safety (hard cap at 120s)
+        MAX_ANSWER_SECONDS = 120
+        duration = serializer.validated_data["duration"]
+        try:
+            duration_seconds = int(duration.total_seconds())
+        except Exception:
+            duration_seconds = 0
+
+        raw_answer_seconds = request.data.get("answer_duration_seconds")
+        if raw_answer_seconds is not None:
+            try:
+                duration_seconds = int(float(raw_answer_seconds))
+            except (TypeError, ValueError):
+                pass
+
+        time_limit_reached = str(request.data.get("time_limit_reached", "")).lower() in {"true", "1", "yes"}
+        if duration_seconds > MAX_ANSWER_SECONDS:
+            logger.warning(
+                "Answer duration exceeded limit; clamping",
+                extra={
+                    "interview_id": interview.id,
+                    "question_id": question.id,
+                    "duration_seconds": duration_seconds,
+                },
+            )
+            duration_seconds = MAX_ANSWER_SECONDS
+            time_limit_reached = True
+
+        duration_seconds = max(1, duration_seconds)
+        duration = timedelta(seconds=duration_seconds)
+
         video_response = VideoResponse.objects.create(
             interview=interview,
             question=question,
             video_file_path=serializer.validated_data["video_file_path"],
-            duration=serializer.validated_data["duration"],
+            duration=duration,
             status="uploaded",
         )
+        try:
+            InterviewAuditLog.objects.create(
+                interview=interview,
+                actor=None,
+                event_type="answer_time_limit" if time_limit_reached else "answer_recorded",
+                metadata={
+                    "question_id": question.id,
+                    "duration_seconds": duration_seconds,
+                    "time_limit_reached": time_limit_reached,
+                },
+            )
+        except Exception:
+            logger.exception("Failed to write answer duration audit log for interview %s", interview.id)
         now = timezone.now()
         if interview.status == "pending":
             interview.status = "in_progress"

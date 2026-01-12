@@ -9,6 +9,7 @@ from typing import Dict, Any
 import google.generativeai as genai
 from django.conf import settings
 
+MAX_ANSWER_SECONDS = 120
 
 class AIAnalysisService:
     """Service class for AI-powered video interview analysis"""
@@ -393,6 +394,8 @@ Do NOT include explanations outside JSON.
                 audio_path = temp_audio.name
             
             video = VideoFileClip(video_file_path)
+            if video.duration and video.duration > MAX_ANSWER_SECONDS:
+                video = video.subclip(0, MAX_ANSWER_SECONDS)
             video.audio.write_audiofile(audio_path, logger=None, verbose=False)
             video.close()
             
@@ -408,7 +411,14 @@ Do NOT include explanations outside JSON.
                 
                 # Extract audio using ffmpeg
                 stream = ffmpeg.input(video_file_path)
-                stream = ffmpeg.output(stream, audio_path, acodec='libmp3lame', ar='44100', ac=2)
+                stream = ffmpeg.output(
+                    stream,
+                    audio_path,
+                    acodec='libmp3lame',
+                    ar='44100',
+                    ac=2,
+                    t=MAX_ANSWER_SECONDS,
+                )
                 ffmpeg.run(stream, capture_stdout=True, capture_stderr=True, overwrite_output=True)
                 
                 print(f"✓ Audio extracted with ffmpeg: {audio_path}")

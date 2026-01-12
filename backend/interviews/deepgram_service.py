@@ -14,6 +14,8 @@ from typing import Dict, Any
 from django.conf import settings
 from deepgram import DeepgramClient, PrerecordedOptions, FileSource
 
+MAX_ANSWER_SECONDS = 120
+
 
 class DeepgramTranscriptionService:
     """Service class for Deepgram-powered video transcription"""
@@ -117,11 +119,12 @@ class DeepgramTranscriptionService:
         try:
             # Extract audio using ffmpeg (mp3 format, 44.1kHz, stereo)
             stream = ffmpeg.input(video_file_path)
-            stream = ffmpeg.output(stream, audio_path, 
+            stream = ffmpeg.output(stream, audio_path,
                                  acodec='libmp3lame', 
                                  ar='44100',  # Sample rate
                                  ac=2,        # Stereo
-                                 ab='128k')   # Bitrate
+                                 ab='128k',
+                                 t=MAX_ANSWER_SECONDS)   # Bitrate + hard cap
             ffmpeg.run(stream, capture_stdout=True, capture_stderr=True, overwrite_output=True)
             
             print(f"✓ Audio extracted: {audio_path}")

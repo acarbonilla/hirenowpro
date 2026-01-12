@@ -352,6 +352,8 @@ class InterviewAuditLog(models.Model):
         ("resume_access", "Resume Access"),
         ("resume_resend", "Resume Resend"),
         ("retake_approved", "Retake Approved"),
+        ("answer_recorded", "Answer Recorded"),
+        ("answer_time_limit", "Answer Time Limit"),
     ]
 
     interview = models.ForeignKey(

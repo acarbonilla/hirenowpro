@@ -58,6 +58,8 @@ const TTS_CONFIG = {
   prosody: "neutral",
 };
 
+const MAX_ANSWER_SECONDS = 120;
+
 // ─────────────────────
 // Utilities
 // ─────────────────────
@@ -106,6 +108,9 @@ export default function InterviewPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
+  const [timeWarning, setTimeWarning] = useState("");
+  const [timeLimitReached, setTimeLimitReached] = useState(false);
+  const [timeLimitReachedByQuestion, setTimeLimitReachedByQuestion] = useState<Set<number>>(new Set());
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState("");
   const [deviceWarning, setDeviceWarning] = useState("");
@@ -805,6 +810,10 @@ export default function InterviewPage() {
       setError("This question is already answered. Please continue to the next question.");
       return;
     }
+    if (activeQuestion && timeLimitReachedByQuestion.has(activeQuestion.id)) {
+      setError("Time limit reached for this question. Please continue to the next question.");
+      return;
+    }
 
     // Verify audio tracks are present
     const audioTracks = webcamRef.current.stream.getAudioTracks();
@@ -836,6 +845,8 @@ export default function InterviewPage() {
     setRecordedChunks([]);
     setError("");
     setSuccessMessage("");
+    setTimeWarning("");
+    setTimeLimitReached(false);
 
     // Configure MediaRecorder with audio codec
     let options = { mimeType: "video/webm;codecs=vp9,opus" };
@@ -861,7 +872,14 @@ export default function InterviewPage() {
     startSilenceDetection(webcamRef.current.stream);
 
     console.log("MediaRecorder started with state:", mediaRecorder.state);
-  }, [handleDataAvailable, startSilenceDetection]);
+  }, [
+    answeredQuestions,
+    currentQuestionIndex,
+    handleDataAvailable,
+    questions,
+    startSilenceDetection,
+    timeLimitReachedByQuestion,
+  ]);
 
   const speak = useCallback(
     (text: string, handlers?: { onEnd?: () => void; onError?: () => void }, cacheKey?: string) => {
@@ -974,6 +992,13 @@ export default function InterviewPage() {
     noResponseTriggeredRef.current = false;
     setSilenceStage(0);
     setSilenceDuration(0);
+    setRecordingTime(0);
+    setTimeWarning("");
+    if (currentQuestion) {
+      setTimeLimitReached(timeLimitReachedByQuestion.has(currentQuestion.id));
+    } else {
+      setTimeLimitReached(false);
+    }
   }, [currentQuestionIndex, questions]);
 
   // Recording timer
@@ -987,6 +1012,32 @@ export default function InterviewPage() {
     // Don't reset recording time when stopping - we need it for upload
     return () => clearInterval(interval);
   }, [isRecording]);
+
+  useEffect(() => {
+    if (!isRecording) return;
+    const remaining = MAX_ANSWER_SECONDS - recordingTime;
+    if (remaining <= 5 && remaining > 0) {
+      setTimeWarning("5 seconds remaining");
+    } else if (remaining <= 15 && remaining > 5) {
+      setTimeWarning("15 seconds remaining");
+    } else if (remaining > 15) {
+      setTimeWarning("");
+    }
+    if (recordingTime >= MAX_ANSWER_SECONDS) {
+      const currentQuestion = questions[currentQuestionIndex];
+      setTimeLimitReached(true);
+      setTimeWarning("");
+      if (currentQuestion) {
+        setTimeLimitReachedByQuestion((prev) => {
+          const next = new Set(prev);
+          next.add(currentQuestion.id);
+          return next;
+        });
+      }
+      setSuccessMessage("Time limit reached. Your answer has been saved.");
+      stopRecordingRef.current();
+    }
+  }, [recordingTime, isRecording, currentQuestionIndex, questions]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording) {
@@ -1079,8 +1130,10 @@ export default function InterviewPage() {
       formData.append("video_file_path", blob, `question_${currentQuestion.id}_${Date.now()}.webm`);
       formData.append("question_id", currentQuestion.id.toString());
       // Ensure at least 1 second duration (0 might cause validation error)
-      const actualDuration = Math.max(recordingTime, 1);
+      const actualDuration = Math.min(Math.max(recordingTime, 1), MAX_ANSWER_SECONDS);
       formData.append("duration", formatDuration(actualDuration));
+      formData.append("answer_duration_seconds", actualDuration.toString());
+      formData.append("time_limit_reached", timeLimitReached ? "true" : "false");
 
       console.log("Uploading video response:");
       console.log("- Interview ID:", interviewId);
@@ -1126,6 +1179,8 @@ export default function InterviewPage() {
 
       setRecordedChunks([]);
       setRecordingTime(0); // Reset recording time for next question
+      setTimeWarning("");
+      setTimeLimitReached(false);
       persistIntegrity("checkpoint");
 
       // Automatically advance to next question OR auto-submit if last
@@ -1521,12 +1576,27 @@ export default function InterviewPage() {
                 Camera
               </h2>
               {isRecording && (
-                <div className="flex items-center text-red-600">
-                  <Circle className="w-4 h-4 mr-2 fill-current animate-pulse" />
-                  <span className="font-mono">{formatTime(recordingTime)}</span>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center text-red-600">
+                    <Circle className="w-4 h-4 mr-2 fill-current animate-pulse" />
+                    <span className="font-mono">{formatTime(recordingTime)}</span>
+                  </div>
+                  <div className="text-sm text-gray-600 font-mono">
+                    {formatTime(Math.max(MAX_ANSWER_SECONDS - recordingTime, 0))}
+                  </div>
                 </div>
               )}
             </div>
+            {timeWarning && isRecording && (
+              <div className="mb-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                {timeWarning}
+              </div>
+            )}
+            {timeLimitReached && !isRecording && (
+              <div className="mb-3 text-sm text-green-700 bg-green-50 border border-green-200 rounded px-3 py-2">
+                Time limit reached. Your answer has been saved.
+              </div>
+            )}
 
             {/* Webcam */}
             <div className="relative bg-gray-900 rounded-lg overflow-hidden aspect-video mb-4">
