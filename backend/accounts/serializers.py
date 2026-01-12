@@ -3,6 +3,7 @@ Serializers for authentication
 """
 
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
 from django.contrib.auth import authenticate
 from .models import User, RecruiterProfile
 
@@ -62,7 +63,7 @@ class LoginSerializer(serializers.Serializer):
             )
             
             if not user:
-                raise serializers.ValidationError('Invalid username or password')
+                raise AuthenticationFailed('Invalid username or password')
             
             if not user.is_active:
                 raise serializers.ValidationError('User account is disabled')

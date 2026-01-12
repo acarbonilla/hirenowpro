@@ -30,16 +30,26 @@ api.interceptors.request.use(
 
     const isPublic = config.url && publicEndpoints.some((endpoint) => config.url!.includes(endpoint));
 
-    // Add auth token if available (prefer HR token for authenticated areas)
+    // Add auth token if available (portal-aware)
     if (typeof window !== "undefined" && !isPublic) {
       // Clean legacy keys to avoid conflicts
       localStorage.removeItem("access_token");
       localStorage.removeItem("refreshToken");
       localStorage.removeItem("refresh_token");
 
-      const hrToken = localStorage.getItem("hr_access");
-      const applicantToken = localStorage.getItem("applicantToken") || localStorage.getItem("applicant_access");
-      const token = hrToken || applicantToken || localStorage.getItem("authToken");
+      const headers = config.headers as Record<string, any> | undefined;
+      const portalHeader = headers?.["X-Portal"] || headers?.["x-portal"];
+      const normalizedPortal = typeof portalHeader === "string" ? portalHeader.toUpperCase() : "";
+
+      let token = "";
+      if (normalizedPortal === "IT") {
+        token = localStorage.getItem("it_access") || "";
+      } else {
+        const hrToken = localStorage.getItem("hr_access") || "";
+        const applicantToken = localStorage.getItem("applicantToken") || localStorage.getItem("applicant_access") || "";
+        token = hrToken || applicantToken || localStorage.getItem("authToken") || "";
+      }
+
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -169,7 +179,7 @@ export const authAPI = {
   refreshToken: (refreshToken: string) => api.post("/auth/token/refresh/", { refresh: refreshToken }),
 
   // Check authentication status
-  checkAuth: () => api.get("/auth/check/"),
+  checkAuth: (config?: AxiosRequestConfig) => api.get("/auth/check/", config),
 
   // Get user profile
   getProfile: () => api.get("/auth/profile/"),

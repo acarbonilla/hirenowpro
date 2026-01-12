@@ -16,6 +16,9 @@ class UserAdminForm(forms.ModelForm):
             ("hr_admin", "HR Admin"),
             ("hr_manager", "HR Manager"),
             ("recruiter", "Recruiter"),
+            ("it_support", "IT Support"),
+            ("admin", "Admin"),
+            ("superadmin", "Super Admin"),
             ("applicant", "Applicant"),
         ]
 

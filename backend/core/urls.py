@@ -21,6 +21,7 @@ urlpatterns = [
     path('api/hr/', include(hr_router.urls)),
     path('api/hr/', include('hr.urls')),
     path('api/system/', include(system_router.urls)),
+    path('api/admin/', include('monitoring.admin_urls')),
     path('api/', include('results.urls')),
     path('api/', include('monitoring.urls')),
 ]

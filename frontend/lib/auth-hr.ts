@@ -18,7 +18,7 @@ export interface AuthTokens {
   refresh: string;
 }
 
-export const HR_USER_TYPES = new Set(["HR_MANAGER", "HR_RECRUITER", "IT_SUPPORT", "ADMIN", "SUPERADMIN"]);
+export const HR_USER_TYPES = new Set(["HR_MANAGER", "HR_RECRUITER", "ADMIN", "SUPERADMIN"]);
 export const HR_MANAGER_USER_TYPES = new Set(["HR_MANAGER", "ADMIN", "SUPERADMIN"]);
 
 const LEGACY_USER_TYPE_MAP: Record<string, string> = {

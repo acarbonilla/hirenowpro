@@ -21,6 +21,261 @@ from .serializers import (
 )
 from accounts.permissions import RolePermission
 
+GUARD_HIT_CACHE_KEY = "traffic_monitor:idempotency_guard_hits:last_1h"
+RETRY_COUNT_CACHE_KEY = "traffic_monitor:retry_attempts:last_15m"
+
+
+def _provider_name(model_name: str | None) -> str:
+    if not model_name:
+        return "Other"
+    normalized = model_name.lower()
+    if "deepgram" in normalized:
+        return "Deepgram"
+    if "gemini" in normalized:
+        return "Gemini"
+    return "Other"
+
+
+def _safe_int(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _safe_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated, RolePermission])
+def traffic_monitor(request):
+    traffic_monitor.required_user_types = ["IT_SUPPORT", "ADMIN", "SUPERADMIN"]
+    """
+    Read-only system traffic monitor for async amplification signals.
+    Returns partial data if some metrics are unavailable.
+    """
+    now = timezone.now()
+    window_15m = now - timedelta(minutes=15)
+    window_1h = now - timedelta(hours=1)
+    data_quality_notes = []
+
+    active_workers = None
+    queue_depth = {"pending": None, "active": None, "retried": None}
+    try:
+        from core.celery import app as celery_app
+
+        inspector = celery_app.control.inspect(timeout=1)
+        active = inspector.active() or {}
+        reserved = inspector.reserved() or {}
+        scheduled = inspector.scheduled() or {}
+        stats = inspector.stats() or {}
+
+        active_count = sum(len(tasks) for tasks in active.values())
+        pending_count = sum(len(tasks) for tasks in reserved.values()) + sum(len(tasks) for tasks in scheduled.values())
+
+        active_workers = len(stats)
+        queue_depth = {"pending": pending_count, "active": active_count, "retried": None}
+    except Exception:
+        data_quality_notes.append("celery_inspect_unavailable")
+
+    # Task error rate based on ProcessingQueue outcomes (best-effort)
+    try:
+        from processing.models import ProcessingQueue
+
+        outcome_stats = ProcessingQueue.objects.filter(
+            completed_at__gte=window_15m
+        ).aggregate(
+            total=Count("id"),
+            failed=Count("id", filter=Q(status="failed")),
+        )
+        total_tasks_15m = _safe_int(outcome_stats.get("total"))
+        failed_tasks_15m = _safe_int(outcome_stats.get("failed"))
+        task_error_rate_last_15m = (failed_tasks_15m / total_tasks_15m) if total_tasks_15m else 0.0
+    except Exception:
+        total_tasks_15m = 0
+        task_error_rate_last_15m = 0.0
+        data_quality_notes.append("processing_queue_unavailable")
+
+    # Outbound call volume (TokenUsage)
+    try:
+        outbound_calls_last_15m = TokenUsage.objects.filter(created_at__gte=window_15m).count()
+    except Exception:
+        outbound_calls_last_15m = 0
+        data_quality_notes.append("token_usage_unavailable")
+
+    worker_restarts_last_1h = None
+    data_quality_notes.append("worker_restart_detection_unavailable")
+
+    # Traffic amplification metrics
+    avg_tasks_per_interview = 0.0
+    max_tasks_for_single_interview = 0
+    avg_retries_per_task = 0.0
+    outbound_calls_per_interview = 0.0
+    idempotency_guard_hits = 0
+
+    try:
+        from processing.models import ProcessingQueue
+
+        per_interview = ProcessingQueue.objects.filter(created_at__gte=window_1h).values("interview_id").annotate(
+            count=Count("id")
+        )
+        counts = [row["count"] for row in per_interview]
+        if counts:
+            avg_tasks_per_interview = sum(counts) / len(counts)
+            max_tasks_for_single_interview = max(counts)
+    except Exception:
+        data_quality_notes.append("processing_queue_metrics_unavailable")
+
+    try:
+        idempotency_guard_hits = _safe_int(cache.get(GUARD_HIT_CACHE_KEY, 0))
+    except Exception:
+        data_quality_notes.append("guard_hit_cache_unavailable")
+
+    try:
+        retry_attempts = _safe_int(cache.get(RETRY_COUNT_CACHE_KEY, 0))
+        avg_retries_per_task = (retry_attempts / total_tasks_15m) if total_tasks_15m else 0.0
+    except Exception:
+        data_quality_notes.append("retry_cache_unavailable")
+
+    try:
+        outbound_qs = TokenUsage.objects.filter(created_at__gte=window_1h, interview__isnull=False)
+        outbound_calls = outbound_qs.count()
+        interviews_seen = outbound_qs.values("interview_id").distinct().count()
+        outbound_calls_per_interview = (outbound_calls / interviews_seen) if interviews_seen else 0.0
+    except Exception:
+        data_quality_notes.append("outbound_calls_per_interview_unavailable")
+
+    # Recent async activity (best-effort: ProcessingQueue)
+    recent_activity = []
+    try:
+        from processing.models import ProcessingQueue
+
+        recent_entries = (
+            ProcessingQueue.objects.select_related("interview")
+            .order_by("-created_at")[:25]
+        )
+        for entry in recent_entries:
+            if entry.started_at and entry.completed_at:
+                duration_seconds = (entry.completed_at - entry.started_at).total_seconds()
+            else:
+                duration_seconds = None
+            task_name = "interviews.tasks.process_complete_interview"
+            if entry.processing_type == "single_video":
+                task_name = "interviews.tasks.analyze_single_video"
+            recent_activity.append(
+                {
+                    "timestamp": entry.created_at.isoformat(),
+                    "interview_id": entry.interview_id,
+                    "task_name": task_name,
+                    "state": entry.status.upper(),
+                    "retries": None,
+                    "duration_seconds": duration_seconds,
+                    "worker_id": None,
+                    "exited_via_idempotency_guard": False,
+                }
+            )
+    except Exception:
+        data_quality_notes.append("recent_activity_unavailable")
+
+    # Outbound API summary (best-effort)
+    outbound_api_summary = []
+    try:
+        usage_rows = TokenUsage.objects.filter(created_at__gte=window_15m).values(
+            "model_name", "success", "api_response_time"
+        )
+        provider_stats = {}
+        for row in usage_rows:
+            provider = _provider_name(row.get("model_name"))
+            bucket = provider_stats.setdefault(
+                provider,
+                {"calls": 0, "errors": 0, "retry_count": 0, "total_latency_ms": 0.0},
+            )
+            bucket["calls"] += 1
+            if not row.get("success", True):
+                bucket["errors"] += 1
+                bucket["retry_count"] += 1  # best-effort: failed calls indicate retry pressure
+            latency = _safe_float(row.get("api_response_time"))
+            if latency:
+                bucket["total_latency_ms"] += latency * 1000
+        for provider, stats in provider_stats.items():
+            avg_latency = (stats["total_latency_ms"] / stats["calls"]) if stats["calls"] else 0.0
+            outbound_api_summary.append(
+                {
+                    "provider": provider,
+                    "calls_last_15m": stats["calls"],
+                    "error_count": stats["errors"],
+                    "retry_count": stats["retry_count"],
+                    "avg_latency_ms": round(avg_latency, 2),
+                }
+            )
+    except Exception:
+        data_quality_notes.append("outbound_api_summary_unavailable")
+
+    # Risk signals
+    worker_online_but_not_executing = False
+    if active_workers is not None and queue_depth.get("pending") is not None and queue_depth.get("active") is not None:
+        worker_online_but_not_executing = (
+            active_workers > 0 and queue_depth["pending"] > 0 and queue_depth["active"] == 0
+        )
+
+    repeated_worker_restart_detected = False
+    log_write_failures_detected = False
+    task_retries_spiking = avg_retries_per_task >= 1.0 and total_tasks_15m >= 5
+
+    outbound_calls_spiking = False
+    try:
+        previous_window = now - timedelta(minutes=30)
+        previous_calls = TokenUsage.objects.filter(
+            created_at__gte=previous_window, created_at__lt=window_15m
+        ).count()
+        if outbound_calls_last_15m >= 50 and outbound_calls_last_15m > (previous_calls * 2):
+            outbound_calls_spiking = True
+    except Exception:
+        data_quality_notes.append("outbound_spike_detection_unavailable")
+
+    flags = [
+        worker_online_but_not_executing,
+        repeated_worker_restart_detected,
+        log_write_failures_detected,
+        task_retries_spiking,
+        outbound_calls_spiking,
+    ]
+    infrastructure_risk_level = "HIGH" if sum(bool(flag) for flag in flags) >= 2 else "NORMAL"
+
+    payload = {
+        "generated_at": now.isoformat(),
+        "data_quality_notes": data_quality_notes,
+        "global_health_summary": {
+            "active_celery_workers": active_workers,
+            "celery_queue_depth": queue_depth,
+            "task_error_rate_last_15m": round(task_error_rate_last_15m, 4),
+            "outbound_calls_last_15m": outbound_calls_last_15m,
+            "worker_restarts_last_1h": worker_restarts_last_1h,
+        },
+        "traffic_amplification_metrics": {
+            "avg_tasks_per_interview_last_1h": round(avg_tasks_per_interview, 2),
+            "max_tasks_for_single_interview_last_1h": max_tasks_for_single_interview,
+            "avg_retries_per_task_last_15m": round(avg_retries_per_task, 2),
+            "outbound_calls_per_interview_last_1h": round(outbound_calls_per_interview, 2),
+            "idempotency_guard_hits_last_1h": idempotency_guard_hits,
+        },
+        "recent_async_activity": recent_activity,
+        "outbound_api_summary": outbound_api_summary,
+        "provider_risk_signals": {
+            "worker_online_but_not_executing": worker_online_but_not_executing,
+            "repeated_worker_restart_detected": repeated_worker_restart_detected,
+            "log_write_failures_detected": log_write_failures_detected,
+            "task_retries_spiking": task_retries_spiking,
+            "outbound_calls_spiking": outbound_calls_spiking,
+            "infrastructure_risk_level": infrastructure_risk_level,
+        },
+    }
+    return Response(payload)
+
 
 @api_view(["GET"])
 @permission_classes([AllowAny])

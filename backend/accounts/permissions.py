@@ -41,10 +41,10 @@ class IsITSupport(BasePermission):
 
 class HRPermission(BasePermission):
     """
-    Allows HR Manager / HR Recruiter / IT Support roles.
+    Allows HR Manager / HR Recruiter roles.
     """
 
-    allowed = {"HR_MANAGER", "HR_RECRUITER", "IT_SUPPORT", "ADMIN", "SUPERADMIN"}
+    allowed = {"HR_MANAGER", "HR_RECRUITER", "ADMIN", "SUPERADMIN"}
 
     def has_permission(self, request, view):
         user = request.user
@@ -106,7 +106,7 @@ class ApplicantOrHR(BasePermission):
             return False
         if getattr(user, "is_authenticated", False) and _effective_role(user) == "APPLICANT":
             return True
-        return bool(_effective_role(user) in ["HR_MANAGER", "HR_RECRUITER", "IT_SUPPORT", "ADMIN", "SUPERADMIN"] or getattr(user, "is_staff", False))
+        return bool(_effective_role(user) in ["HR_MANAGER", "HR_RECRUITER", "ADMIN", "SUPERADMIN"] or getattr(user, "is_staff", False))
 
 
 # Backwards-compat aliases used elsewhere

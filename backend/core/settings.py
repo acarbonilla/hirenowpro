@@ -75,9 +75,9 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',  # CORS middleware
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
-    'corsheaders.middleware.CorsMiddleware',  # CORS middleware
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -229,6 +229,7 @@ else:
 
 CORS_ALLOW_HEADERS = list(default_headers) + [
     "authorization",
+    "x-portal",
 ]
 
 
@@ -265,6 +266,11 @@ CELERY_TASK_ACKS_LATE = os.getenv('CELERY_TASK_ACKS_LATE', 'True') == 'True'
 CELERY_TASK_TIME_LIMIT = int(os.getenv('CELERY_TASK_TIME_LIMIT', '900'))  # hard limit in seconds
 CELERY_TASK_SOFT_TIME_LIMIT = int(os.getenv('CELERY_TASK_SOFT_TIME_LIMIT', '840'))
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_TASK_TRACK_STARTED = True
+# Ensure broker re-delivery timeout exceeds max task duration.
+CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 1200}
+CELERY_RESULT_EXPIRES = int(os.getenv('CELERY_RESULT_EXPIRES', '3600'))
 
 
 # ============================

@@ -780,6 +780,12 @@ class InterviewViewSet(viewsets.ModelViewSet):
         POST /api/interviews/{id}/submit/
         """
         interview = self.get_object()
+
+        if interview.status in ["submitted", "processing", "completed", "failed"]:
+            return Response(
+                {"detail": "Interview already submitted."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         
         _debug_print(f"\n=== INTERVIEW SUBMISSION REQUEST ===")
         _debug_print(f"Interview ID: {interview.id}")

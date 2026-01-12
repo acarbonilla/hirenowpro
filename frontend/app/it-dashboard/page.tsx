@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
-import { getHRToken, normalizeUserType } from "@/lib/auth-hr";
+import { normalizeUserType } from "@/lib/auth-hr";
+import { getITToken, getITUser, clearITAuth } from "@/lib/auth-it";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 const ADMIN_URL = API_BASE_URL ? API_BASE_URL.replace(/\/api\/?$/, "") + "/admin/" : "/admin/";
@@ -46,34 +47,36 @@ export default function ITDashboard() {
 
   const checkAccess = async () => {
     try {
-      const token = getHRToken();
-      if (!token) {
-        router.push("/hr-login");
-        return;
-      }
+      const token = getITToken();
+    if (!token) {
+      router.push("/it-login");
+      return;
+    }
 
       // Verify IT Support access
       const authRes = await axios.get(`${API_BASE_URL}/auth/check/`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, "X-Portal": "IT" },
       });
 
       const permissions: UserPermissions = authRes.data.permissions;
       const userType = normalizeUserType(authRes.data?.user_type || authRes.data?.user?.user_type);
-      const itPortalUserTypes = new Set(["IT_SUPPORT", "SUPERADMIN"]);
+      const itPortalUserTypes = new Set(["IT_SUPPORT", "ADMIN", "SUPERADMIN"]);
 
       // Only IT Support can access this page
       if (!itPortalUserTypes.has(userType)) {
         setError("Access denied. IT Support role required.");
-        setTimeout(() => router.push("/hr-dashboard"), 2000);
+        clearITAuth();
+        setTimeout(() => router.push("/it-login"), 2000);
         return;
       }
 
-      setUser(authRes.data.user);
+      setUser(authRes.data.user || getITUser());
       fetchStats();
     } catch (error: any) {
       console.error("Access check error:", error);
       if (error.response?.status === 401) {
-        router.push("/hr-login");
+        clearITAuth();
+        router.push("/it-login");
       } else {
         setError("Failed to verify access");
       }
@@ -83,7 +86,7 @@ export default function ITDashboard() {
   const fetchStats = async () => {
     setLoading(true);
     try {
-      const token = getHRToken();
+      const token = getITToken();
       const headers = { Authorization: `Bearer ${token}` };
 
       const statsRes = await axios.get(`${API_BASE_URL}/token-usage/statistics/`, { headers });
@@ -97,12 +100,9 @@ export default function ITDashboard() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem("hr_token");
-    localStorage.removeItem("hr_refreshToken");
-    localStorage.removeItem("hr_user");
-    localStorage.removeItem("hr_authToken");
-    router.push("/");
-  };
+      clearITAuth();
+      router.push("/");
+    };
 
   const formatNumber = (num: number) => {
     return new Intl.NumberFormat().format(num);
@@ -253,6 +253,28 @@ export default function ITDashboard() {
 
           {/* Action Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <a
+              href="/it-dashboard/traffic-monitor"
+              className="block bg-white border-2 border-gray-200 rounded-xl p-6 hover:border-blue-500 transition-colors"
+            >
+              <div className="flex items-center space-x-4">
+                <div className="bg-blue-100 p-3 rounded-lg">
+                  <svg className="h-8 w-8 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 13h2a2 2 0 002 2v2a2 2 0 002 2h6a2 2 0 002-2v-2a2 2 0 002-2h2M5 9h14a2 2 0 012 2v1H3v-1a2 2 0 012-2z"
+                    />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-gray-900">System Traffic Monitor</h3>
+                  <p className="text-sm text-gray-500">Detect task storms and outbound risk signals</p>
+                </div>
+              </div>
+            </a>
+
             <a
               href="/hr-dashboard/token-monitoring"
               className="block bg-white border-2 border-gray-200 rounded-xl p-6 hover:border-blue-500 transition-colors"

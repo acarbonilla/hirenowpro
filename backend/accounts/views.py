@@ -49,6 +49,9 @@ class LoginView(generics.GenericAPIView):
         serializer.is_valid(raise_exception=True)
         
         user = serializer.validated_data['user']
+        portal_header = request.headers.get("X-Portal")
+        portal_body = request.data.get("portal")
+        portal = (portal_header or portal_body or "").strip().upper()
 
         # Role gate if configured
         user_type = getattr(user, "user_type", None)
@@ -72,6 +75,36 @@ class LoginView(generics.GenericAPIView):
             else:
                 if not is_hr_user_type(normalized_user_type):
                     raise AuthenticationFailed("Not an HR account")
+
+        if portal == "IT":
+            allowed_it_roles = {"IT_SUPPORT", "ADMIN", "SUPERADMIN"}
+            if normalized_user_type not in allowed_it_roles:
+                logging.getLogger(__name__).warning(
+                    "IT portal login rejected",
+                    extra={
+                        "user_id": getattr(user, "id", None),
+                        "username": getattr(user, "username", None),
+                        "user_type": normalized_user_type,
+                    },
+                )
+                return Response(
+                    {"detail": "Account not authorized for IT access"},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            logging.getLogger(__name__).info(
+                "IT portal login accepted",
+                extra={
+                    "user_id": getattr(user, "id", None),
+                    "username": getattr(user, "username", None),
+                    "user_type": normalized_user_type,
+                },
+            )
+
+        if normalized_user_type == "IT_SUPPORT":
+            logging.getLogger(__name__).info(
+                "IT login success",
+                extra={"user_id": getattr(user, "id", None), "username": getattr(user, "username", None)},
+            )
 
         # Generate JWT tokens
         refresh = RefreshToken.for_user(user)
@@ -202,6 +235,19 @@ def check_auth(request):
         or 'HR Manager' in groups
         or can_view_system_analytics
     )
+
+    if request.headers.get("X-Portal", "").lower() == "it":
+        allowed_it = canonical_user_type in {"IT_SUPPORT", "ADMIN", "SUPERADMIN"}
+        if allowed_it:
+            logging.getLogger(__name__).info(
+                "IT portal auth accepted",
+                extra={"user_id": getattr(user, "id", None), "user_type": canonical_user_type},
+            )
+        else:
+            logging.getLogger(__name__).warning(
+                "IT portal auth rejected",
+                extra={"user_id": getattr(user, "id", None), "user_type": canonical_user_type},
+            )
 
     return Response({
         'authenticated': True,

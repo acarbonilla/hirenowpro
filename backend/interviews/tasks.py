@@ -3,15 +3,107 @@ Celery tasks for bulk interview processing
 """
 
 from celery import shared_task, group
+from celery.exceptions import Retry
 from django.utils import timezone
 from django.db import transaction
+from django.core.cache import cache
 import logging
 import time
+import random
 
 logger = logging.getLogger(__name__)
 
+RETRY_BASE_SECONDS = 60
+RETRY_MAX_SECONDS = 600
+RETRY_JITTER_SECONDS = 30
 
-@shared_task(bind=True, max_retries=3)
+
+def _build_transient_exceptions():
+    transient = [TimeoutError, ConnectionError, OSError]
+    try:
+        from requests import exceptions as requests_exceptions
+        transient.append(requests_exceptions.RequestException)
+    except Exception:
+        pass
+    try:
+        from google.api_core import exceptions as google_exceptions
+        transient.extend([
+            google_exceptions.ServiceUnavailable,
+            google_exceptions.DeadlineExceeded,
+            google_exceptions.TooManyRequests,
+            google_exceptions.InternalServerError,
+        ])
+    except Exception:
+        pass
+    return tuple(transient)
+
+
+TRANSIENT_EXCEPTIONS = _build_transient_exceptions()
+
+GUARD_HIT_CACHE_KEY = "traffic_monitor:idempotency_guard_hits:last_1h"
+RETRY_COUNT_CACHE_KEY = "traffic_monitor:retry_attempts:last_15m"
+GUARD_HIT_TTL_SECONDS = 3600
+RETRY_COUNT_TTL_SECONDS = 900
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    return isinstance(exc, TRANSIENT_EXCEPTIONS)
+
+def _increment_cache_counter(key: str, ttl_seconds: int) -> None:
+    try:
+        cache.add(key, 0, timeout=ttl_seconds)
+        cache.incr(key)
+    except Exception:
+        logger.debug("Unable to increment cache counter %s", key)
+
+
+def _record_guard_hit(interview_id: int, reason: str) -> None:
+    _increment_cache_counter(GUARD_HIT_CACHE_KEY, GUARD_HIT_TTL_SECONDS)
+    logger.info("Idempotency guard hit for interview %s (%s)", interview_id, reason)
+
+
+def _mark_terminal_failure(interview, queue_entry, error_message: str):
+    if queue_entry:
+        queue_entry.status = 'failed'
+        queue_entry.error_message = error_message
+        queue_entry.completed_at = timezone.now()
+        queue_entry.save(update_fields=['status', 'error_message', 'completed_at'])
+    if interview:
+        interview.status = 'failed'
+        interview.error_message = error_message
+        interview.completed_at = timezone.now()
+        interview.save(update_fields=['status', 'error_message', 'completed_at'])
+
+
+def _retry_with_backoff(self, exc: Exception, target_id: int, queue_entry=None):
+    if not _is_transient_error(exc):
+        logger.error("Non-transient error for task target %s: %s", target_id, exc)
+        raise
+    retries = self.request.retries
+    max_retries = getattr(self, "max_retries", 3)
+    if retries >= max_retries:
+        logger.error("Max retries reached for task target %s", target_id)
+        raise
+    _increment_cache_counter(RETRY_COUNT_CACHE_KEY, RETRY_COUNT_TTL_SECONDS)
+    delay = min(RETRY_BASE_SECONDS * (2 ** retries) + random.randint(0, RETRY_JITTER_SECONDS), RETRY_MAX_SECONDS)
+    logger.warning(
+        "Retrying task target %s in %ss (attempt %s/%s)",
+        target_id,
+        delay,
+        retries + 1,
+        max_retries,
+    )
+    raise self.retry(exc=exc, countdown=delay)
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    soft_time_limit=300,
+    time_limit=360,
+)
 def process_complete_interview(self, interview_id):
     """
     Process all video responses in BULK after interview submission
@@ -37,36 +129,38 @@ def process_complete_interview(self, interview_id):
     interview = None
     queue_entry = None
 
-    try:
-        interview = Interview.objects.get(id=interview_id)
-    except Interview.DoesNotExist:
-        logger.error(f"Interview {interview_id} not found")
-        raise
+    logger.info("Interview %s task start (task_id=%s)", interview_id, self.request.id)
 
     try:
+        with transaction.atomic():
+            interview = Interview.objects.select_for_update().get(id=interview_id)
+            if interview.status in ['completed', 'failed']:
+                _record_guard_hit(interview_id, f"status_{interview.status}")
+                return {'status': 'skipped', 'reason': interview.status}
+
+            try:
+                queue_entry = ProcessingQueue.objects.select_for_update().filter(
+                    interview=interview,
+                    processing_type='bulk_analysis'
+                ).latest('created_at')
+                if queue_entry.status in ['processing', 'completed']:
+                    _record_guard_hit(interview_id, f"queue_{queue_entry.status}")
+                    return {'status': 'skipped', 'reason': f"queue_{queue_entry.status}"}
+                queue_entry.status = 'processing'
+                queue_entry.started_at = timezone.now()
+                queue_entry.celery_task_id = self.request.id
+                queue_entry.save(update_fields=['status', 'started_at', 'celery_task_id'])
+            except ProcessingQueue.DoesNotExist:
+                queue_entry = None
+                if interview.status == 'processing':
+                    _record_guard_hit(interview_id, "processing_no_queue")
+                    return {'status': 'skipped', 'reason': 'processing'}
+
+            if interview.status != 'processing':
+                interview.status = 'processing'
+                interview.save(update_fields=['status'])
+
         logger.info(f"AI analysis started for interview {interview_id}")
-
-        # Guard against duplicate processing runs
-        if interview.status in ['processing', 'completed']:
-            logger.info(f"Interview {interview_id} already in status '{interview.status}', continuing with processing run.")
-
-        # Get processing queue entry
-        try:
-            queue_entry = ProcessingQueue.objects.filter(
-                interview=interview,
-                processing_type='bulk_analysis'
-            ).latest('created_at')
-            
-            queue_entry.status = 'processing'
-            queue_entry.started_at = timezone.now()
-            queue_entry.save(update_fields=['status', 'started_at'])
-        except ProcessingQueue.DoesNotExist:
-            logger.warning(f"No processing queue found for interview {interview_id}")
-            queue_entry = None
-        
-        # Update interview status
-        interview.status = 'processing'
-        interview.save(update_fields=['status'])
         
         # Get all video responses
         video_responses = list(interview.video_responses.all())
@@ -232,34 +326,29 @@ def process_complete_interview(self, interview_id):
         
     except Exception as e:
         logger.error(f"Error processing interview {interview_id}: {str(e)}", exc_info=True)
-        
-        # Update queue status
-        if queue_entry:
+        try:
+            _retry_with_backoff(self, e, interview_id, queue_entry=queue_entry)
+        except Retry:
+            raise
+        except Exception as retry_error:
             try:
-                queue_entry.status = 'failed'
-                queue_entry.error_message = str(e)
-                queue_entry.completed_at = timezone.now()
-                queue_entry.save(update_fields=['status', 'error_message', 'completed_at'])
+                _mark_terminal_failure(interview, queue_entry, str(e))
             except Exception:
-                logger.exception("Failed to update queue entry for interview %s", interview_id)
-        
-        # Update interview status
-        if interview:
-            try:
-                interview.status = 'failed'
-                interview.completed_at = timezone.now()
-                interview.save(update_fields=['status', 'completed_at'])
-            except Exception:
-                logger.exception("Failed to update interview %s status to failed", interview_id)
-        
-        # Retry the task (let Celery mark as failed if retries exhausted)
-        raise self.retry(exc=e, countdown=60 * (self.request.retries + 1))
+                logger.exception("Failed to mark terminal failure for interview %s", interview_id)
+            raise retry_error
 
 # Single public entry point for background analysis
 analyze_interview = process_complete_interview
 
 
-@shared_task(bind=True, max_retries=3)
+@shared_task(
+    bind=True,
+    max_retries=3,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    soft_time_limit=300,
+    time_limit=360,
+)
 def analyze_single_video(self, video_response_id):
     """
     Analyze individual video response
@@ -308,6 +397,8 @@ def analyze_single_video(self, video_response_id):
 
         prompt_context = get_role_prompt_context(role_code)
         core_competencies = prompt_context.get("core_competencies") or None
+
+        role_profile = prompt_context.get("role_profile") or None
 
         analysis_result = ai_service.analyze_transcript(
             transcript_text=transcript,
@@ -371,16 +462,18 @@ def analyze_single_video(self, video_response_id):
         logger.error(f"Error analyzing video {video_response_id}: {str(e)}", exc_info=True)
         logger.error(traceback.format_exc())
         
-        # Update status to failed
         try:
-            video_response = VideoResponse.objects.get(id=video_response_id)
-            video_response.status = 'failed'
-            video_response.save()
-        except:
-            pass
-        
-        # Retry the task
-        raise self.retry(exc=e, countdown=30 * (self.request.retries + 1))
+            _retry_with_backoff(self, e, video_response_id)
+        except Retry:
+            raise
+        except Exception:
+            try:
+                video_response = VideoResponse.objects.get(id=video_response_id)
+                video_response.status = 'failed'
+                video_response.save()
+            except Exception:
+                pass
+            raise
 
 
 def calculate_interview_score(interview_id):

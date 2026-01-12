@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authAPI } from "@/lib/api";
-import { setHRAuth, normalizeUserType } from "@/lib/auth-hr";
+import { normalizeUserType } from "@/lib/auth-hr";
+import { setITAuth, clearITAuth } from "@/lib/auth-it";
 
 export default function ITLoginPage() {
   const router = useRouter();
@@ -21,21 +22,25 @@ export default function ITLoginPage() {
 
     try {
       const response = await authAPI.login(formData);
-      const { tokens, user } = response.data;
+      const tokens = response.data.tokens || { access: response.data.access, refresh: response.data.refresh };
+      const user = response.data.user || response.data?.user_data || response.data?.profile;
 
       // Store authentication first
-      setHRAuth(tokens, user);
+      setITAuth(tokens, user);
 
       // Check user permissions
-      const authCheckResponse = await authAPI.checkAuth();
+      const authCheckResponse = await authAPI.checkAuth({
+        headers: { "X-Portal": "IT" },
+      });
       const userType = normalizeUserType(
         authCheckResponse.data?.user_type || authCheckResponse.data?.user?.user_type || user?.user_type
       );
-      const itPortalUserTypes = new Set(["IT_SUPPORT", "SUPERADMIN"]);
+      const itPortalUserTypes = new Set(["IT_SUPPORT", "ADMIN", "SUPERADMIN"]);
 
       // Verify IT Support access
       if (!itPortalUserTypes.has(userType)) {
-        setError("Access denied. This portal is for IT Support staff only.");
+        clearITAuth();
+        setError("Account not authorized for IT access.");
         setLoading(false);
         return;
       }
@@ -87,7 +92,7 @@ export default function ITLoginPage() {
             </div>
           </div>
           <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">IT Admin Portal</h2>
-          <p className="mt-2 text-center text-sm text-gray-600">System Monitoring & Administration</p>
+          <p className="mt-2 text-center text-sm text-gray-600">System Monitoring & Infrastructure Access</p>
         </div>
 
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
@@ -205,9 +210,9 @@ export default function ITLoginPage() {
                 </svg>
               </div>
               <div className="ml-3">
-                <h3 className="text-sm font-medium text-blue-800">IT Support Access</h3>
+                <h3 className="text-sm font-medium text-blue-800">IT Admin Access</h3>
                 <div className="mt-2 text-sm text-blue-700">
-                  <p>This portal is for IT Support staff only. You will have access to:</p>
+                  <p>This portal is for IT admins only. You will have access to:</p>
                   <ul className="list-disc list-inside mt-1 space-y-1">
                     <li>Token usage monitoring</li>
                     <li>System administration</li>
