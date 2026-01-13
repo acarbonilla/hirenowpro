@@ -61,13 +61,35 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: ${{ secrets.BACKEND_HEALTH_URL }}
         run: npm run build
 
+      - name: Inspect frontend build output
+        run: |
+          pwd
+          ls -la
+          ls -la frontend/.next || echo "NO .next"
+          ls -la frontend/out || echo "NO out"
+          ls -la frontend/public || echo "NO public"
+
+      - name: Detect frontend build output
+        id: detect_frontend_output
+        run: |
+          if [ -d "frontend/.next" ]; then
+            echo "frontend_dir=frontend/.next" >> "$GITHUB_OUTPUT"
+            echo "Detected .next output"
+          elif [ -d "frontend/out" ]; then
+            echo "frontend_dir=frontend/out" >> "$GITHUB_OUTPUT"
+            echo "Detected out output"
+          else
+            echo "No frontend build output directory found"
+            exit 1
+          fi
+
       - name: Upload frontend artifacts
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
           if-no-files-found: error
           path: |
-            frontend/.next
+            ${{ steps.detect_frontend_output.outputs.frontend_dir }}
             frontend/public
 
   deploy:
