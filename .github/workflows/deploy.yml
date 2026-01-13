@@ -67,8 +67,8 @@ jobs:
           name: frontend-build
           if-no-files-found: error
           path: |
-            .next
-            public
+            frontend/.next
+            frontend/public
 
   deploy:
     runs-on: ubuntu-latest
