@@ -65,17 +65,17 @@ jobs:
         run: |
           pwd
           ls -la
-          ls -la frontend/.next || echo "NO .next"
-          ls -la frontend/out || echo "NO out"
-          ls -la frontend/public || echo "NO public"
+          ls -la .next || echo "NO .next"
+          ls -la out || echo "NO out"
+          ls -la public || echo "NO public"
 
       - name: Detect frontend build output
         id: detect_frontend_output
         run: |
-          if [ -d "frontend/.next" ]; then
+          if [ -d ".next" ]; then
             echo "frontend_dir=frontend/.next" >> "$GITHUB_OUTPUT"
             echo "Detected .next output"
-          elif [ -d "frontend/out" ]; then
+          elif [ -d "out" ]; then
             echo "frontend_dir=frontend/out" >> "$GITHUB_OUTPUT"
             echo "Detected out output"
           else
