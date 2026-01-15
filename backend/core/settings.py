@@ -334,3 +334,7 @@ CSRF_TRUSTED_ORIGINS = [
     for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
     if o.strip()
 ]
+
+
+SESSION_COOKIE_SECURE = True
+CSRF_COOKIE_SECURE = True
