@@ -184,6 +184,7 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_THROTTLE_RATES': {
+        'registration_burst': '10/min',
         'registration_hourly': '5/hour',
         'registration_daily': '10/day',
         'login_ip': '10/min',
@@ -192,6 +193,15 @@ REST_FRAMEWORK = {
         'user': '100/min',
     },
 }
+
+if DEBUG:
+    REST_FRAMEWORK["DEFAULT_THROTTLE_RATES"].update(
+        {
+            "registration_burst": "50/min",
+            "registration_hourly": "200/hour",
+            "registration_daily": "500/day",
+        }
+    )
 
 
 # ============================
@@ -329,10 +339,12 @@ LOG_HR_AUTH = False
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+_raw_csrf_origins = os.getenv("CSRF_TRUSTED_ORIGINS", "")
+
 CSRF_TRUSTED_ORIGINS = [
     o.strip()
-    for o in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
-    if o.strip()
+    for o in _raw_csrf_origins.split(",")
+    if o.strip().startswith(("http://", "https://"))
 ]
 
 

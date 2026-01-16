@@ -65,6 +65,16 @@ class ApplicantSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Phone number is required.")
         return value
 
+    def validate_latitude(self, value):
+        if value is None:
+            return value
+        return round(value, 6)
+
+    def validate_longitude(self, value):
+        if value is None:
+            return value
+        return round(value, 6)
+
 
 class ApplicantCreateSerializer(serializers.ModelSerializer):
     """Simplified serializer for creating applicants"""
@@ -76,6 +86,8 @@ class ApplicantCreateSerializer(serializers.ModelSerializer):
     application_source = serializers.CharField(required=False)
     is_onsite = serializers.BooleanField(required=False, allow_null=True, write_only=True)
     location_source = serializers.CharField(required=False, allow_null=True, write_only=True)
+    position_type_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
+    office_id = serializers.IntegerField(required=False, allow_null=True, write_only=True)
     
     class Meta:
         model = Applicant
@@ -90,7 +102,9 @@ class ApplicantCreateSerializer(serializers.ModelSerializer):
             'applicant_lat',
             'applicant_lng',
             'is_onsite',
-            'location_source'
+            'location_source',
+            'position_type_id',
+            'office_id',
         ]
         extra_kwargs = {
             'email': {'validators': []},  # Remove default validators, we'll handle in validate_email
@@ -98,6 +112,12 @@ class ApplicantCreateSerializer(serializers.ModelSerializer):
     
     def validate(self, attrs):
         """Ensure application_source has a default value if not provided"""
+        office_id = attrs.pop('office_id', None)
+        if office_id is not None:
+            office = OfficeLocation.objects.filter(pk=office_id).first()
+            if not office:
+                raise serializers.ValidationError({"office_id": "Invalid office id."})
+            attrs['office'] = office
         if 'application_source' not in attrs or not attrs.get('application_source'):
             attrs['application_source'] = 'online'
         return attrs
@@ -128,12 +148,15 @@ class ApplicantCreateSerializer(serializers.ModelSerializer):
         # Normalize incoming lat/lng keys
         applicant_lat = validated_data.pop('applicant_lat', None)
         applicant_lng = validated_data.pop('applicant_lng', None)
+        validated_data.pop('position_type_id', None)
         latitude = applicant_lat if applicant_lat is not None else validated_data.get('latitude')
         longitude = applicant_lng if applicant_lng is not None else validated_data.get('longitude')
 
-        # Fetch the default office (first active)
-        office = OfficeLocation.objects.filter(is_active=True).first()
-        validated_data['office'] = office if office else None
+        # Fetch the default office (first active) if not provided
+        if 'office' not in validated_data:
+            office = OfficeLocation.objects.filter(is_active=True).first()
+            validated_data['office'] = office if office else None
+        office = validated_data.get('office')
 
         geo_status = 'unknown'
         distance_m = None

@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { applicantAPI, interviewAPI, publicAPI } from "@/lib/api";
 import { useStore } from "@/store/useStore";
@@ -68,6 +68,9 @@ function RegisterPageContent() {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitLock = useRef(false);
+  const inFlightRequest = useRef<Promise<unknown> | null>(null);
+  const submitAttempts = useRef(0);
   const [pendingApplicationDetected, setPendingApplicationDetected] = useState(false);
   const [resumeInterviewId, setResumeInterviewId] = useState<number | null>(null);
   const [resumeDetected, setResumeDetected] = useState(false);
@@ -232,10 +235,18 @@ function RegisterPageContent() {
       return;
     }
 
+    if (submitLock.current || isSubmitting || inFlightRequest.current) {
+      logDebug("Duplicate submit prevented", { attempts: submitAttempts.current });
+      return;
+    }
+
+    submitLock.current = true;
     setIsSubmitting(true);
     setApiError("");
 
     try {
+      submitAttempts.current += 1;
+      logDebug("Registration submit attempt", { attempt: submitAttempts.current });
       const registrationData = {
         ...formData,
         applicant_lat: location?.latitude ?? null,
@@ -247,10 +258,25 @@ function RegisterPageContent() {
         position_type_id: positionTypeId,
         office_id: officeId,
       };
+      const normalizeCoordinate = (value: number) => Number(value.toFixed(6));
+      if (typeof registrationData.latitude === "number") {
+        registrationData.latitude = normalizeCoordinate(registrationData.latitude);
+      }
+      if (typeof registrationData.longitude === "number") {
+        registrationData.longitude = normalizeCoordinate(registrationData.longitude);
+      }
+      if (typeof registrationData.applicant_lat === "number") {
+        registrationData.applicant_lat = normalizeCoordinate(registrationData.applicant_lat);
+      }
+      if (typeof registrationData.applicant_lng === "number") {
+        registrationData.applicant_lng = normalizeCoordinate(registrationData.applicant_lng);
+      }
 
       logDebug("Sending registration data:", registrationData);
 
-      const applicantResponse = await applicantAPI.register(registrationData);
+      const requestPromise = applicantAPI.register(registrationData);
+      inFlightRequest.current = requestPromise;
+      const applicantResponse = await requestPromise;
       const applicant = applicantResponse.data.applicant || applicantResponse.data;
       const token = applicantResponse.data.token;
       const resumeInterviewId = applicantResponse.data.interview_id;
@@ -327,6 +353,16 @@ function RegisterPageContent() {
         return;
       }
     } catch (error: any) {
+      if (error.response?.status === 429) {
+        setApiError("Too many attempts. Please wait a minute and try again.");
+        setIsSubmitting(false);
+        return;
+      }
+      if (error.response?.status === 409 && error.response?.data?.state === "duplicate_request") {
+        setApiError("Your registration is already being processed. Please wait a moment.");
+        setIsSubmitting(false);
+        return;
+      }
       if (error.response?.data) {
         const errorData = error.response.data;
         const state = errorData.state || "";
@@ -344,6 +380,19 @@ function RegisterPageContent() {
           setApiError("An application already exists for this email. Please try again with your existing interview.");
           setIsSubmitting(false);
           return;
+        }
+        if (errorData.details && typeof errorData.details === "object") {
+          const fieldErrors: Record<string, string> = {};
+          Object.keys(errorData.details).forEach((key) => {
+            const errorValue = errorData.details[key];
+            fieldErrors[key] = Array.isArray(errorValue) ? errorValue[0] : String(errorValue);
+          });
+          if (Object.keys(fieldErrors).length > 0) {
+            setErrors(fieldErrors);
+            setApiError("Please fix the errors below and try again.");
+            setIsSubmitting(false);
+            return;
+          }
         }
         const emailMessage = errorData?.details?.email?.[0] || "";
 
@@ -409,6 +458,8 @@ function RegisterPageContent() {
       return;
     } finally {
       setIsSubmitting(false);
+      submitLock.current = false;
+      inFlightRequest.current = null;
     }
   };
 

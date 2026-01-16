@@ -1,4 +1,4 @@
-from rest_framework.throttling import SimpleRateThrottle, UserRateThrottle
+from rest_framework.throttling import AnonRateThrottle, SimpleRateThrottle, UserRateThrottle
 
 
 class RegistrationHourlyThrottle(SimpleRateThrottle):
@@ -20,6 +20,9 @@ class RegistrationDailyThrottle(SimpleRateThrottle):
             "ident": self.get_ident(request),
         }
 
+
+class RegistrationBurstThrottle(AnonRateThrottle):
+    scope = "registration_burst"
 
 class TrainingUploadMinuteThrottle(UserRateThrottle):
     scope = "training_upload_minute"

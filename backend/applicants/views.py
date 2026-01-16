@@ -3,9 +3,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from accounts.permissions import IsApplicant
-from common.throttles import RegistrationHourlyThrottle, RegistrationDailyThrottle
+from common.throttles import RegistrationBurstThrottle, RegistrationHourlyThrottle, RegistrationDailyThrottle
 from common.permissions import IsHRUser
 from accounts.authentication import generate_applicant_token, ApplicantTokenAuthentication
+from django.conf import settings
 from django.db.models import Q, OuterRef, Subquery, Exists, Value, Case, When, BooleanField
 from django.db.models.functions import Coalesce
 from django.utils import timezone
@@ -66,7 +67,9 @@ class ApplicantViewSet(viewsets.ModelViewSet):
 
     def get_throttles(self):
         if self.action == "create":
-            return [RegistrationHourlyThrottle(), RegistrationDailyThrottle()]
+            if settings.DEBUG:
+                return [RegistrationHourlyThrottle()]
+            return [RegistrationBurstThrottle(), RegistrationHourlyThrottle(), RegistrationDailyThrottle()]
         return super().get_throttles()
     
     def get_queryset(self):
@@ -185,6 +188,8 @@ class ApplicantViewSet(viewsets.ModelViewSet):
         import logging
         logger = logging.getLogger(__name__)
         from interviews.models import Interview
+        from django.core.cache import cache
+        from django.db import IntegrityError, transaction
 
         email = (request.data.get("email") or "").strip().lower()
         position_type_id = request.data.get("position_type_id")
@@ -244,9 +249,21 @@ class ApplicantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_200_OK,
             )
 
+        lock_key = f"registration_lock:{email}" if email else None
+        if lock_key and not cache.add(lock_key, "1", timeout=30):
+            return Response(
+                {
+                    "detail": "Registration already in progress. Please wait and try again.",
+                    "state": "duplicate_request",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         serializer = self.get_serializer(data=request.data)
         if not serializer.is_valid():
             logger.error(f"Validation errors: {serializer.errors}")
+            if lock_key:
+                cache.delete(lock_key)
             # Return detailed error response
             return Response(
                 {
@@ -257,7 +274,8 @@ class ApplicantViewSet(viewsets.ModelViewSet):
             )
         
         try:
-            applicant = serializer.save()
+            with transaction.atomic():
+                applicant = serializer.save()
             
             # Generate applicant token for passwordless interview access
             token = generate_applicant_token(applicant.id)
@@ -273,8 +291,33 @@ class ApplicantViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_201_CREATED
             )
+        except IntegrityError:
+            if lock_key:
+                cache.delete(lock_key)
+            existing_applicant = Applicant.objects.filter(email__iexact=email).first() if email else None
+            if existing_applicant:
+                token = generate_applicant_token(existing_applicant.id)
+                response_serializer = ApplicantSerializer(existing_applicant)
+                return Response(
+                    {
+                        "message": "Applicant already registered.",
+                        "resume": False,
+                        "applicant": response_serializer.data,
+                        "token": token,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            return Response(
+                {
+                    "detail": "Duplicate registration detected.",
+                    "state": "applicant_exists",
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         except Exception as e:
             logger.error("Error saving applicant", exc_info=True)
+            if lock_key:
+                cache.delete(lock_key)
             return Response(
                 {
                     'error': 'Failed to save applicant',
