@@ -13,18 +13,6 @@ load_dotenv()
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/5.1/howto/deployment/checklist/
-
-# SECURITY WARNING: keep the secret key used in production secret!
-# Development:
-#   set DJANGO_DEBUG=true
-#   set DJANGO_SECRET_KEY=dev-only-secret
-#   set APPLICANT_SECRET=dev-only-applicant-secret (optional in dev)
-# Production:
-#   set DJANGO_DEBUG=false
-#   set DJANGO_SECRET_KEY=<secure-random>
-#   set APPLICANT_SECRET=<secure-random>
 DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() == "true"
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY") or os.getenv("SECRET_KEY")
 if not SECRET_KEY and DEBUG:
@@ -369,20 +357,5 @@ CSRF_COOKIE_SECURE = True
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "ERROR",
-    },
-    "loggers": {
-        "django": {
-            "handlers": ["console"],
-            "level": "ERROR",
-            "propagate": True,
-        },
-    },
 }
+DEBUG = True
