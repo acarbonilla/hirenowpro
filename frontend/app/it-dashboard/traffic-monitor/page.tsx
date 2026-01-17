@@ -5,8 +5,8 @@ import { useRouter } from "next/navigation";
 import axios from "axios";
 import { normalizeUserType } from "@/lib/auth-hr";
 import { getITToken, getITUser, clearITAuth } from "@/lib/auth-it";
+import { API_BASE_URL } from "@/lib/apiBase";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 const IT_USER_TYPES = new Set(["IT_SUPPORT", "ADMIN", "SUPERADMIN"]);
 
 type QueueDepth = {

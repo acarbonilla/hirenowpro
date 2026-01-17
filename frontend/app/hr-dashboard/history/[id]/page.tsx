@@ -5,10 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
+import { API_BASE_URL } from "@/lib/apiBase";
 import { resolveVideoUrl } from "@/lib/media";
 import VideoPlayer from "@/components/VideoPlayer";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 interface VideoResponse {
   id: number;

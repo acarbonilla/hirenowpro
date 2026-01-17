@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation";
 import axios from "axios";
 import { normalizeUserType } from "@/lib/auth-hr";
 import { getITToken, getITUser, clearITAuth } from "@/lib/auth-it";
+import { API_BASE_URL } from "@/lib/apiBase";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
-const ADMIN_URL = API_BASE_URL ? API_BASE_URL.replace(/\/api\/?$/, "") + "/admin/" : "/admin/";
+const ADMIN_URL = API_BASE_URL.replace(/\/api\/?$/, "") + "/admin/";
 
 interface TokenStats {
   total_requests: number;

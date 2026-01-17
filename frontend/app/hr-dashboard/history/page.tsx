@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+import { API_BASE_URL } from "@/lib/apiBase";
 
 interface ApplicantHistory {
   id: number;

@@ -1,4 +1,5 @@
 import axios from "axios";
+import { API_BASE_URL } from "@/lib/apiBase";
 import { getHRToken } from "../auth-hr";
 
 /**
@@ -8,7 +9,7 @@ export const hrClient = () => {
   const token = getHRToken();
 
   return axios.create({
-    baseURL: process.env.NEXT_PUBLIC_API_URL,
+    baseURL: API_BASE_URL,
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
 };

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
+import { API_BASE_URL } from "@/lib/apiBase";
 import {
   ArrowRight,
   Briefcase,
@@ -19,7 +20,6 @@ import type { JobPosition } from "@/types";
 import PositionDetailModal from "@/components/PositionDetailModal";
 import { formatSalaryDisplay } from "@/lib/salary";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 const iconMap: Record<string, React.ComponentType<LucideProps>> = {
   "virtual-assistant": Headset,

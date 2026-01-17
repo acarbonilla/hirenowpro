@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import { getHRToken, getHRUser, normalizeUserType } from "@/lib/auth-hr";
+import { API_BASE_URL } from "@/lib/apiBase";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 const ADMIN_USER_TYPES = new Set(["ADMIN", "SUPERADMIN"]);
 
 type QueueDepth = {

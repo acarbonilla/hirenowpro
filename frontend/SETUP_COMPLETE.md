@@ -142,7 +142,8 @@ python manage.py test
 ### Environment Variables (.env.local)
 
 ```env
-NEXT_PUBLIC_API_URL=https://your-backend-domain.example/api
+DEPLOYMENT_ENV=development
+NEXT_PUBLIC_API_BASE_URL=https://your-backend-domain.example/api
 NEXT_PUBLIC_APP_NAME=HireNowPro
 NEXT_PUBLIC_MAX_VIDEO_DURATION=120
 ```

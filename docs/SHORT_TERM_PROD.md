@@ -22,7 +22,7 @@ Backend (Django):
 - FRONTEND_BASE_URL=https://yourdomain.com
 
 Frontend (Next.js):
-- NEXT_PUBLIC_API_URL=https://yourdomain.com/api
+- DEPLOYMENT_ENV=production
 - NEXT_PUBLIC_API_BASE_URL=https://yourdomain.com/api
 - NEXT_PUBLIC_APP_NAME=HireNowPro
 - NEXT_PUBLIC_MAX_VIDEO_DURATION=120

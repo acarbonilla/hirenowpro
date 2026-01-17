@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import axios from "axios";
+import { API_BASE_URL } from "@/lib/apiBase";
 
 export default function QRLoginPage() {
   const params = useParams();
@@ -15,7 +16,7 @@ export default function QRLoginPage() {
   useEffect(() => {
     const validate = async () => {
       try {
-        const res = await axios.get(`/api/applicant/qr-login/${token}/`);
+        const res = await axios.get(`${API_BASE_URL}/applicant/qr-login/${token}/`);
         if (res.data?.valid && res.data?.token) {
           localStorage.setItem("applicantToken", res.data.token);
           setStatus("success");

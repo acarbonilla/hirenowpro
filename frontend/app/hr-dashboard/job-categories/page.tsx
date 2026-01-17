@@ -5,8 +5,7 @@ import { useRouter } from "next/navigation";
 import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
 import { authAPI } from "@/lib/api";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+import { API_BASE_URL } from "@/lib/apiBase";
 
 interface JobCategory {
   id: number;

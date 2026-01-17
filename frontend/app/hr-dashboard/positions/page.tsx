@@ -5,9 +5,8 @@ import { useRouter } from "next/navigation";
 import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
 import { authAPI } from "@/lib/api";
+import { API_BASE_URL } from "@/lib/apiBase";
 import { Plus, Edit2, Trash2, Save, X, Briefcase } from "lucide-react";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 interface Position {
   id: number;

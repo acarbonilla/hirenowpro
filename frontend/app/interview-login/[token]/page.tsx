@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import axios from "axios";
+import { API_BASE_URL } from "@/lib/apiBase";
 
 export default function InterviewMagicLoginPage() {
   const params = useParams();
@@ -17,8 +18,7 @@ export default function InterviewMagicLoginPage() {
     const validate = async () => {
       try {
         // Call backend directly to avoid Next.js /api 308 redirects aborting the XHR.
-        const apiBase = process.env.NEXT_PUBLIC_API_URL;
-        const res = await axios.get(`${apiBase}/applicant/magic-login/${token}/`, {
+        const res = await axios.get(`${API_BASE_URL}/applicant/magic-login/${token}/`, {
           validateStatus: () => true,
         });
         if (res.status === 200 && res.data?.valid && res.data?.token) {

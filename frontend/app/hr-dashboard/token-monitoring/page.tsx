@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+import { API_BASE_URL } from "@/lib/apiBase";
 
 interface TokenStats {
   total_requests: number;

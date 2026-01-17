@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import axios from 'axios';
+import axios from "axios";
+import { API_BASE_URL } from "@/lib/apiBase";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export default function ApplicationStatusPage() {
   const [loading, setLoading] = useState(true);

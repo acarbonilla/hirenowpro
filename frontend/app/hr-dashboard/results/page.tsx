@@ -4,8 +4,7 @@ import { useEffect, useState } from "react";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 import { getHRToken } from "@/lib/auth-hr";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
+import { API_BASE_URL } from "@/lib/apiBase";
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const DATE_FILTERS = [
   { value: "all", label: "All" },
