@@ -1,15 +1,23 @@
-const isProd = process.env.NODE_ENV === "production";
-
 export const API_BASE_URL = (() => {
-  const base =
-    process.env.NEXT_PUBLIC_API_BASE_URL ||
-    (!isProd ? "http://localhost:8000/api" : "");
+  const base = process.env.NEXT_PUBLIC_API_BASE_URL;
 
-  if (isProd && !base) {
+  if (!base) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "NEXT_PUBLIC_API_BASE_URL is REQUIRED in production builds"
+      );
+    }
+    return "http://localhost:8000/api";
+  }
+
+  if (
+    process.env.NODE_ENV === "production" &&
+    /localhost|127\.0\.0\.1/.test(base)
+  ) {
     throw new Error(
-      "NEXT_PUBLIC_API_BASE_URL is required in production. Refusing to fall back."
+      "Production API base URL must not point to localhost"
     );
   }
 
-  return base;
+  return base.replace(/\/$/, "");
 })();

@@ -1,12 +1,22 @@
 import type { NextConfig } from "next";
 
-const isProduction =
-  process.env.DEPLOYMENT_ENV === "production" ||
-  process.env.NODE_ENV === "production";
+function validateProductionApiBase() {
+  const isProduction =
+    process.env.DEPLOYMENT_ENV === "production" ||
+    process.env.NODE_ENV === "production";
 
-if (isProduction && !process.env.NEXT_PUBLIC_API_BASE_URL) {
-  throw new Error("Missing NEXT_PUBLIC_API_BASE_URL in production build.");
+  if (isProduction) {
+    const base = process.env.NEXT_PUBLIC_API_BASE_URL;
+    if (!base) {
+      throw new Error("NEXT_PUBLIC_API_BASE_URL missing in production build");
+    }
+    if (/localhost|127\.0\.0\.1/.test(base)) {
+      throw new Error("Invalid production API base URL: localhost detected");
+    }
+  }
 }
+
+validateProductionApiBase();
 
 const nextConfig: NextConfig = {
   /* config options here */
