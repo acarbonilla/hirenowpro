@@ -21,8 +21,8 @@ api.interceptors.request.use(
     // We use partial matching, so "/applicants/" matches "/api/applicants/"
     const publicEndpoints = [
       "/applicants/",
-      "/auth/login/",
-      "/auth/register/",
+      "/api/auth/login/",
+      "/api/auth/register/",
       "/interviews/",
       "/analysis/",
     ];
@@ -156,12 +156,12 @@ export const questionAPI = {
 
 export const authAPI = {
   // Login
-  login: (data: { username: string; password: string }) => api.post("/auth/login/", data),
+  login: (data: { username: string; password: string }) => api.post("/api/auth/login/", data),
   hrLogin: (data: { username: string; password: string }) => api.post("/api/auth/hr-login/", data),
-  applicantLogin: (data: { username: string; password: string }) => api.post("/auth/applicant-login/", data),
+  applicantLogin: (data: { username: string; password: string }) => api.post("/api/auth/applicant-login/", data),
 
   // Logout
-  logout: (refreshToken: string) => api.post("/auth/logout/", { refresh_token: refreshToken }),
+  logout: (refreshToken: string) => api.post("/api/auth/logout/", { refresh_token: refreshToken }),
 
   // Register
   register: (data: {
@@ -172,24 +172,24 @@ export const authAPI = {
     user_type?: string;
     first_name?: string;
     last_name?: string;
-  }) => api.post("/auth/register/", data),
+  }) => api.post("/api/auth/register/", data),
 
   // Refresh token
-  refreshToken: (refreshToken: string) => api.post("/auth/token/refresh/", { refresh: refreshToken }),
+  refreshToken: (refreshToken: string) => api.post("/api/auth/token/refresh/", { refresh: refreshToken }),
 
   // Check authentication status
-  checkAuth: (config?: AxiosRequestConfig) => api.get("/auth/check/", config),
+  checkAuth: (config?: AxiosRequestConfig) => api.get("/api/auth/check/", config),
 
   // Get user profile
-  getProfile: () => api.get("/auth/profile/"),
+  getProfile: () => api.get("/api/auth/profile/"),
 
   // Update user profile
   updateProfile: (data: { first_name?: string; last_name?: string; email?: string }) =>
-    api.patch("/auth/profile/", data),
+    api.patch("/api/auth/profile/", data),
 
   // Change password
   changePassword: (data: { old_password: string; new_password: string; new_password_confirm: string }) =>
-    api.patch("/auth/change-password/", data),
+    api.patch("/api/auth/change-password/", data),
 };
 
 export const settingsAPI = {

@@ -54,7 +54,7 @@ export default function ITDashboard() {
     }
 
       // Verify IT Support access
-      const authRes = await axios.get(`${API_BASE_URL}/auth/check/`, {
+      const authRes = await axios.get(`${API_BASE_URL}/api/auth/check/`, {
         headers: { Authorization: `Bearer ${token}`, "X-Portal": "IT" },
       });
 
