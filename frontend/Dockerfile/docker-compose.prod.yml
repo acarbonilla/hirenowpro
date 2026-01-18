@@ -1,0 +1,179 @@
+version: "3.9"
+
+services:
+  # -------------------------
+  # DATABASE
+  # -------------------------
+  postgres:
+    image: postgres:16
+    container_name: hnp_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # -------------------------
+  # REDIS
+  # -------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: hnp_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  # -------------------------
+  # DJANGO BACKEND (API + ADMIN)
+
+  # -------------------------
+  backend:
+    build: ./hr/backend
+    image: hnp_backend:prod
+    container_name: hnp_backend
+    restart: unless-stopped
+    env_file: .env
+    command: >
+      gunicorn core.wsgi:application
+      --bind 0.0.0.0:8000
+      --workers 3
+      --log-level info
+      --access-logfile -
+      --error-logfile -
+    volumes:
+      - backend_static:/app/static
+      - backend_media:/app/media
+    networks:
+      - appnet
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # -------------------------
+  # CELERY WORKER
+  # -------------------------
+  worker:
+    build: ./hr/backend
+    image: hnp_backend:prod
+    container_name: hnp_worker
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A core.celery worker -l info
+    networks:
+      - appnet
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # -------------------------
+  # CELERY BEAT
+  # -------------------------
+  beat:
+    build: ./hr/backend
+    image: hnp_backend:prod
+    container_name: hnp_beat
+    restart: unless-stopped
+    env_file: .env
+    command: celery -A core.celery beat -l info
+    networks:
+      - appnet
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+# -------------------------
+# NEXT.JS FRONTEND
+# -------------------------
+  frontend:
+    build: ./hr/frontend
+    image: hnp_frontend:prod
+    container_name: hnp_frontend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: "--max_old_space_size=1024"
+
+      # ✅ THESE MUST BE INDENTED UNDER environment
+      DEPLOYMENT_ENV: production
+      NEXT_PUBLIC_API_BASE_URL: https://api.iais.online
+
+    networks:
+      - appnet
+
+
+  # -------------------------
+  # NGINX (PUBLIC ENTRYPOINT)
+  # -------------------------
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: hnp_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - backend_static:/var/www/static:ro
+      - backend_media:/var/www/media:ro
+      - letsencrypt:/etc/letsencrypt
+      - certbot_var:/var/lib/letsencrypt
+    networks:
+      - appnet
+    depends_on:
+      - backend
+      - frontend
+
+  # -------------------------
+  # CERTBOT (SSL)
+  # -------------------------
+  certbot:
+    image: certbot/certbot:latest
+    container_name: hnp_certbot
+    restart: "no"
+    volumes:
+      - letsencrypt:/etc/letsencrypt
+      - certbot_var:/var/lib/letsencrypt
+    entrypoint: ["sh", "-lc", "echo 'certbot container ready'"]
+    networks:
+      - appnet
+
+# -------------------------
+# NETWORK
+# -------------------------
+networks:
+  appnet:
+    name: hnp_appnet
+
+# -------------------------
+# VOLUMES
+# -------------------------
+volumes:
+  postgres_data:
+  redis_data:
+  backend_static:
+  backend_media:
+  letsencrypt:
+  certbot_var:
