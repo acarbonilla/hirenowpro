@@ -157,7 +157,7 @@ export const questionAPI = {
 export const authAPI = {
   // Login
   login: (data: { username: string; password: string }) => api.post("/auth/login/", data),
-  hrLogin: (data: { username: string; password: string }) => api.post("/auth/hr-login/", data),
+  hrLogin: (data: { username: string; password: string }) => api.post("/api/auth/hr-login/", data),
   applicantLogin: (data: { username: string; password: string }) => api.post("/auth/applicant-login/", data),
 
   // Logout
