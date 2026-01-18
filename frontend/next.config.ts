@@ -6,6 +6,9 @@ const validateApiBaseUrl = () => {
   const deploymentEnv = process.env.DEPLOYMENT_ENV;
 
   if (deploymentEnv === "production") {
+    if (legacyBaseUrl) {
+      throw new Error("NEXT_PUBLIC_API_URL is not allowed in production. Use NEXT_PUBLIC_API_BASE_URL.");
+    }
     if (!baseUrl) {
       throw new Error("NEXT_PUBLIC_API_BASE_URL is required when DEPLOYMENT_ENV=production.");
     }

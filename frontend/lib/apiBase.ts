@@ -2,6 +2,7 @@ const RAW_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL;
 const LEGACY_BASE_URL = process.env.NEXT_PUBLIC_API_URL;
 const deploymentEnv = process.env.DEPLOYMENT_ENV;
 const isProductionDeployment = deploymentEnv === "production";
+const DEV_FALLBACK_BASE_URL = "http://127.0.0.1:8000/api";
 
 const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
 
@@ -19,6 +20,10 @@ const ensureAbsoluteUrl = (value: string) => {
 };
 
 const resolveApiBaseUrl = () => {
+  if (isProductionDeployment && LEGACY_BASE_URL) {
+    throw new Error("NEXT_PUBLIC_API_URL is not allowed in production. Use NEXT_PUBLIC_API_BASE_URL.");
+  }
+
   if (RAW_BASE_URL) {
     return normalizeBaseUrl(RAW_BASE_URL);
   }
@@ -34,7 +39,7 @@ const resolveApiBaseUrl = () => {
       }
       return normalized;
     }
-    return "http://localhost:8000/api";
+    return DEV_FALLBACK_BASE_URL;
   }
 
   throw new Error(
