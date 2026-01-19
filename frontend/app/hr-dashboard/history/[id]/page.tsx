@@ -98,7 +98,7 @@ export default function ApplicantDetailHistoryPage() {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const response = await axios.get(`${API_BASE_URL}/applicants/${applicantId}/full-history/`, { headers });
+      const response = await axios.get(`${API_BASE_URL}/api/applicants/${applicantId}/full-history/`, { headers });
       const data = response.data;
       setApplicant(data);
 
@@ -120,7 +120,7 @@ export default function ApplicantDetailHistoryPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(`${API_BASE_URL}/hr/interviews/${interviewId}/`, { headers });
+      const response = await axios.get(`${API_BASE_URL}/api/hr/interviews/${interviewId}/`, { headers });
       const responses = response.data?.video_responses || [];
       const scriptById = new Map(
         responses.map((video: any) => [

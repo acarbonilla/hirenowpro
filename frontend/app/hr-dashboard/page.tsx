@@ -61,7 +61,7 @@ export default function HRDashboardPage() {
       //   api.get("/interviews/"),
       //   api.get("/applicants/"),
       // ]);
-      const overviewRes = await api.get("/hr/dashboard/overview/");
+      const overviewRes = await api.get("/api/hr/dashboard/overview/");
       const data = overviewRes.data || {};
 
       setStats({

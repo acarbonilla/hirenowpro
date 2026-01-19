@@ -88,7 +88,7 @@ export default function ApplicantDetailPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post(`${API_BASE_URL}/hr/applicant/${applicantId}/resend-link/`, null, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/hr/applicant/${applicantId}/resend-link/`, null, { headers });
       setLink(res.data?.url);
       setSuccess("Interview link resent.");
       await loadLatestInterview();
@@ -106,7 +106,7 @@ export default function ApplicantDetailPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post(`${API_BASE_URL}/hr/applicant/${applicantId}/generate-qr/`, null, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/hr/applicant/${applicantId}/generate-qr/`, null, { headers });
       setQrData(res.data);
     } catch (err: any) {
       setError(err.response?.data?.error || "Failed to generate QR");
@@ -122,7 +122,7 @@ export default function ApplicantDetailPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await axios.post(`${API_BASE_URL}/hr/applicant/${applicantId}/resend-qr/`, null, { headers });
+      const res = await axios.post(`${API_BASE_URL}/api/hr/applicant/${applicantId}/resend-qr/`, null, { headers });
       setQrData(res.data);
     } catch (err: any) {
       setError(err.response?.data?.error || "Failed to resend QR");

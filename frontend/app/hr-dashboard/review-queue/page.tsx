@@ -74,7 +74,7 @@ export default function HRReviewQueuePage() {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const res = await axios.get<ReviewResponse>(`${API_BASE_URL}/hr/results/summary/`, {
+      const res = await axios.get<ReviewResponse>(`${API_BASE_URL}/api/hr/results/summary/`, {
         headers,
         params: {
           page,

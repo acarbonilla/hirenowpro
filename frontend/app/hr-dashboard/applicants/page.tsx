@@ -106,7 +106,7 @@ export default function ApplicantsPage() {
       params.set("page", String(currentPage));
       params.set("page_size", String(itemsPerPage));
 
-      const response = await axios.get<ApplicantsResponse>(`${API_BASE_URL}/applicants/?${params.toString()}`, {
+      const response = await axios.get<ApplicantsResponse>(`${API_BASE_URL}/api/applicants/?${params.toString()}`, {
         headers,
         timeout: 15000,
       });

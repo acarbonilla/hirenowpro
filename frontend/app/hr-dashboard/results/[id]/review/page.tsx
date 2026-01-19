@@ -226,11 +226,11 @@ export default function ReviewPage() {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       const [summaryRes, detailsRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/results/${resultId}/review/summary/`, {
+        axios.get(`${API_BASE_URL}/api/results/${resultId}/review/summary/`, {
           headers,
           timeout: 10000,
         }),
-        axios.get(`${API_BASE_URL}/results/${resultId}/review/details/`, {
+        axios.get(`${API_BASE_URL}/api/results/${resultId}/review/details/`, {
           headers,
           timeout: 20000,
         }),
@@ -241,7 +241,7 @@ export default function ReviewPage() {
 
       let interviewMeta: { email_sent?: boolean; email_sent_at?: string | null; interview_status?: string | null } = {};
       if (summary?.interview_id) {
-        const interviewRes = await axios.get(`${API_BASE_URL}/hr/interviews/${summary.interview_id}/`, {
+        const interviewRes = await axios.get(`${API_BASE_URL}/api/hr/interviews/${summary.interview_id}/`, {
           headers,
           timeout: 10000,
         });
@@ -317,7 +317,7 @@ export default function ReviewPage() {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       await axios.post(
-        `${API_BASE_URL}/results/${resultId}/override-score/`,
+        `${API_BASE_URL}/api/results/${resultId}/override-score/`,
         {
           video_response_id: selectedVideo.id,
           override_score: score,
@@ -361,7 +361,7 @@ export default function ReviewPage() {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       const response = await axios.post(
-        `${API_BASE_URL}/hr/interviews/${reviewData.interview_id}/decision/`,
+        `${API_BASE_URL}/api/hr/interviews/${reviewData.interview_id}/decision/`,
         {
           decision: decisionType,
           hr_comment: trimmedReason || undefined,
@@ -422,7 +422,7 @@ export default function ReviewPage() {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       await axios.post(
-        `${API_BASE_URL}/hr/interviews/${reviewData.interview_id}/send-decision-email/`,
+        `${API_BASE_URL}/api/hr/interviews/${reviewData.interview_id}/send-decision-email/`,
         {
           final_decision: finalDecision,
         },

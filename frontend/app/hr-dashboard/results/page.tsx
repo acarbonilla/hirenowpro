@@ -69,7 +69,7 @@ export default function HRResultsPage() {
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
     try {
-      const res = await axios.get(`${API_BASE_URL}/hr/results/summary/`, {
+      const res = await axios.get(`${API_BASE_URL}/api/hr/results/summary/`, {
         headers,
         params: {
           page,

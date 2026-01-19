@@ -101,7 +101,7 @@ export default function ApplicantHistoryPage() {
       if (scoreMax) params.append("score_max", scoreMax);
       if (hasInterview !== "all") params.append("has_interview", hasInterview);
 
-      const url = `${API_BASE_URL}/applicants/history/?${params.toString()}`;
+      const url = `${API_BASE_URL}/api/applicants/history/?${params.toString()}`;
 
       const response = await axios.get(url, {
         headers,

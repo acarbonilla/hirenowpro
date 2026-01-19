@@ -94,7 +94,7 @@ export default function PositionsManagementPage() {
         return;
       }
 
-      const response = await axios.get(`${API_BASE_URL}/positions/`, {
+      const response = await axios.get(`${API_BASE_URL}/api/positions/`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -111,7 +111,7 @@ export default function PositionsManagementPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(`${API_BASE_URL}/offices/`, { headers });
+      const response = await axios.get(`${API_BASE_URL}/api/offices/`, { headers });
       const data = response.data.results || response.data || [];
       setOfficesOptions(data);
     } catch (err) {
@@ -123,7 +123,7 @@ export default function PositionsManagementPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(`${API_BASE_URL}/job-categories/`, { headers });
+      const response = await axios.get(`${API_BASE_URL}/api/job-categories/`, { headers });
       const data = response.data.results || response.data || [];
       setCategoriesOptions(data);
     } catch (err) {
@@ -224,12 +224,12 @@ export default function PositionsManagementPage() {
 
       if (editingPosition) {
         // Update existing position
-        await axios.put(`${API_BASE_URL}/positions/${editingPosition.id}/`, payload, {
+        await axios.put(`${API_BASE_URL}/api/positions/${editingPosition.id}/`, payload, {
           headers: { Authorization: `Bearer ${token}` },
         });
       } else {
         // Create new position
-        await axios.post(`${API_BASE_URL}/positions/`, payload, {
+        await axios.post(`${API_BASE_URL}/api/positions/`, payload, {
           headers: { Authorization: `Bearer ${token}` },
         });
       }
@@ -258,7 +258,7 @@ export default function PositionsManagementPage() {
         return;
       }
 
-      await axios.delete(`${API_BASE_URL}/positions/${id}/`, {
+      await axios.delete(`${API_BASE_URL}/api/positions/${id}/`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -282,7 +282,7 @@ export default function PositionsManagementPage() {
       }
 
       await axios.patch(
-        `${API_BASE_URL}/positions/${position.id}/`,
+        `${API_BASE_URL}/api/positions/${position.id}/`,
         { is_active: !position.is_active },
         {
           headers: { Authorization: `Bearer ${token}` },

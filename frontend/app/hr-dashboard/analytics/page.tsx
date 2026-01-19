@@ -136,10 +136,10 @@ export default function AnalyticsPage() {
     setError("");
     try {
       if (mode === "recruiter") {
-        const response = await api.get("/analytics/recruiter/");
+        const response = await api.get("/api/analytics/recruiter/");
         setRecruiterInsights(response.data);
       } else {
-        const response = await api.get("/analytics/system/", { params: { period: selectedPeriod } });
+        const response = await api.get("/api/analytics/system/", { params: { period: selectedPeriod } });
         setSystemAnalytics(response.data);
       }
     } catch (err: any) {
