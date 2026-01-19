@@ -304,14 +304,22 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
 DEEPGRAM_TTS_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en")
 TTS_PROVIDER = os.getenv("TTS_PROVIDER", "deepgram")
+STT_PROVIDER = os.getenv("STT_PROVIDER", "deepgram")
 
 TTS_ENABLED = bool(DEEPGRAM_API_KEY and TTS_PROVIDER == "deepgram")
+STT_ENABLED = bool(DEEPGRAM_API_KEY and STT_PROVIDER == "deepgram")
+
+INTERVIEW_PROCESSING_SYNC = os.getenv("INTERVIEW_PROCESSING_SYNC", "false").lower() == "true"
+if not DEBUG:
+    INTERVIEW_PROCESSING_SYNC = False
 
 logger = logging.getLogger(__name__)
 
 logger.info("TTS enabled: %s", TTS_ENABLED)
 logger.info("TTS provider: %s", TTS_PROVIDER)
 logger.info("TTS model: %s", DEEPGRAM_TTS_MODEL)
+logger.info("STT enabled: %s", STT_ENABLED)
+logger.info("Interview processing sync enabled: %s", INTERVIEW_PROCESSING_SYNC)
 
 
 

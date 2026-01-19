@@ -3,6 +3,7 @@ import logging
 import time
 import requests
 import re
+import uuid
 from pathlib import Path
 from datetime import timedelta
 from django.conf import settings
@@ -25,8 +26,9 @@ from .serializers import (
     PublicInterviewSerializer,
     PublicJobPositionSerializer,
 )
-from interviews.tasks import process_complete_interview
+from interviews.tasks import process_complete_interview, transcribe_video_response
 from interviews.question_selection import select_questions_for_interview, select_questions_for_interview_with_metadata
+from interviews.services import enqueue_interview_processing, build_processing_status_payload
 
 logger = logging.getLogger(__name__)
 
@@ -329,22 +331,36 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
 
         transcript_error = None
         transcript_text = ""
+        transcription_task_id = None
 
-        try:
-            from interviews.deepgram_service import get_deepgram_service
+        if getattr(settings, "STT_ENABLED", False):
+            if getattr(settings, "INTERVIEW_PROCESSING_SYNC", False):
+                try:
+                    from interviews.deepgram_service import get_deepgram_service
 
-            deepgram_service = get_deepgram_service()
-            transcript_data = deepgram_service.transcribe_video(
-                video_response.video_file_path.path, video_response_id=video_response.id
-            )
-            transcript_text = transcript_data.get("transcript", "") or ""
-            video_response.transcript = transcript_text
-            video_response.save()
-        except Exception as exc:  # noqa: BLE001 - log and return consistent contract
-            transcript_error = str(exc)
-            transcript_text = ""
-            video_response.transcript = ""
-            video_response.save()
+                    deepgram_service = get_deepgram_service()
+                    transcript_data = deepgram_service.transcribe_video(
+                        video_response.video_file_path.path,
+                        video_response_id=video_response.id,
+                    )
+                    transcript_text = transcript_data.get("transcript", "") or ""
+                    video_response.transcript = transcript_text
+                    video_response.save(update_fields=["transcript"])
+                except Exception as exc:  # noqa: BLE001 - log and return consistent contract
+                    transcript_error = str(exc)
+                    transcript_text = ""
+                    video_response.transcript = ""
+                    video_response.save(update_fields=["transcript"])
+            else:
+                transcription_task_id = str(uuid.uuid4())
+
+                def queue_transcription():
+                    transcribe_video_response.apply_async(
+                        args=[video_response.id],
+                        task_id=transcription_task_id,
+                    )
+
+                transaction.on_commit(queue_transcription)
 
         response_payload = {
             "video_response": {
@@ -355,6 +371,7 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
             },
             "transcript_ready": bool(transcript_text),
             "transcription_error": transcript_error,
+            "transcription_task_id": transcription_task_id,
         }
 
         return Response(response_payload, status=status.HTTP_201_CREATED)
@@ -369,6 +386,14 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
     def submit(self, request, pk=None):
         start_time = time.monotonic()
         interview = self.get_object()
+        force = str(request.data.get("force", "")).lower() in {"true", "1", "yes"}
+        if interview.processing_status in {"QUEUED", "RUNNING", "SUCCEEDED"}:
+            payload = build_processing_status_payload(interview)
+            return Response(payload, status=status.HTTP_202_ACCEPTED)
+        if interview.processing_status == "FAILED" and not force:
+            payload = build_processing_status_payload(interview)
+            payload["detail"] = "Interview processing failed. Use force=true to requeue."
+            return Response(payload, status=status.HTTP_409_CONFLICT)
 
         if interview.status not in ["pending", "in_progress"]:
             return Response({"detail": "Interview already submitted."}, status=status.HTTP_400_BAD_REQUEST)
@@ -398,25 +423,51 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         interview.last_activity_at = timezone.now()
         interview.save(update_fields=update_fields)
 
-        # Create processing queue entry for visibility (best-effort)
+        enqueue_result = None
         try:
-            from processing.models import ProcessingQueue
-
-            ProcessingQueue.objects.create(
-                interview=interview,
-                processing_type="bulk_analysis",
-                status="pending",
-            )
+            enqueue_result = enqueue_interview_processing(interview.id, force=force)
         except Exception:
-            logger.exception("Failed to create processing queue entry for interview %s", interview.id)
+            logger.exception("Failed to enqueue interview processing for interview %s", interview.id)
 
-        # Enqueue AI analysis after transaction commits to avoid orphan tasks
-        transaction.on_commit(lambda: process_complete_interview.delay(interview.id))
+        if enqueue_result:
+            if getattr(settings, "INTERVIEW_PROCESSING_SYNC", False):
+                process_complete_interview.apply(
+                    args=[interview.id],
+                    task_id=enqueue_result["task_id"],
+                )
+            else:
+                def queue_celery_task():
+                    process_complete_interview.apply_async(
+                        args=[interview.id],
+                        task_id=enqueue_result["task_id"],
+                    )
+
+                transaction.on_commit(queue_celery_task)
 
         elapsed_ms = int((time.monotonic() - start_time) * 1000)
         logger.info("Interview %s submit completed in %sms", interview.id, elapsed_ms)
 
-        return Response({"detail": "Interview submitted successfully."}, status=status.HTTP_200_OK)
+        return Response(
+            {
+                "status": "QUEUED",
+                "interview_id": interview.id,
+                "task_id": enqueue_result.get("task_id") if enqueue_result else None,
+                "queue_id": enqueue_result.get("queue_id") if enqueue_result else None,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="processing-status",
+        permission_classes=[AllowAny],
+        authentication_classes=[],
+    )
+    def processing_status(self, request, pk=None):
+        interview = self.get_object()
+        payload = build_processing_status_payload(interview)
+        return Response(payload, status=status.HTTP_200_OK)
 
     @action(
         detail=True,

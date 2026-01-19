@@ -90,6 +90,13 @@ class Interview(models.Model):
         ('completed', 'Completed'),
         ('failed', 'Failed'),
     ]
+    PROCESSING_STATUS_CHOICES = [
+        ("IDLE", "Idle"),
+        ("QUEUED", "Queued"),
+        ("RUNNING", "Running"),
+        ("SUCCEEDED", "Succeeded"),
+        ("FAILED", "Failed"),
+    ]
     HR_DECISION_CHOICES = [
         ('hire', 'Hire'),
         ('reject', 'Reject'),
@@ -138,6 +145,25 @@ class Interview(models.Model):
     completed_at = models.DateTimeField(null=True, blank=True)
     # Error message for failed status
     error_message = models.TextField(blank=True, null=True, help_text="Error details if processing failed")
+    processing_status = models.CharField(
+        max_length=20,
+        choices=PROCESSING_STATUS_CHOICES,
+        default="IDLE",
+        help_text="Async processing lifecycle state for interview analysis",
+    )
+    processing_task_id = models.CharField(
+        max_length=255,
+        blank=True,
+        null=True,
+        help_text="Celery task ID for async interview processing",
+    )
+    processing_error = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Processing error details for async interview processing",
+    )
+    processing_started_at = models.DateTimeField(null=True, blank=True)
+    processing_finished_at = models.DateTimeField(null=True, blank=True)
     
     # Authenticity Tracking
     authenticity_flag = models.BooleanField(

@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.conf import settings
 from datetime import timedelta
+import uuid
 import logging
 from django.db import transaction
 from rest_framework.pagination import PageNumberPagination
@@ -35,6 +36,8 @@ from .serializers import (
 from .type_serializers import JobCategorySerializer, QuestionTypeSerializer
 from .type_serializers import JobCategorySerializer as PositionTypeSerializer
 from .question_selection import select_questions_for_interview, select_questions_for_interview_with_metadata
+from .services import enqueue_interview_processing, build_processing_status_payload
+from .tasks import process_complete_interview, transcribe_video_response
 from notifications.tasks import send_applicant_email_task
 
 logger = logging.getLogger(__name__)
@@ -512,41 +515,56 @@ class InterviewViewSet(viewsets.ModelViewSet):
             )
         except Exception:
             logger.exception("Failed to write answer duration audit log for interview %s", interview.id)
-        
-        # IMMEDIATE TRANSCRIPTION: Use Deepgram STT to transcribe and store transcript
-        # This is fast (~2-5 seconds) and doesn't wait for LLM analysis
-        try:
-            from .deepgram_service import get_deepgram_service
-            
-            _debug_print(f"🎤 Starting Deepgram transcription for video {video_response.id}...")
-            deepgram_service = get_deepgram_service()
-            
-            # Transcribe video to text
-            transcript_data = deepgram_service.transcribe_video(
-                video_response.video_file_path.path,
-                video_response_id=video_response.id
-            )
-            
-            # Store transcript in database
-            video_response.transcript = transcript_data['transcript']
-            video_response.status = 'uploaded'  # Still uploaded, not analyzed yet
-            video_response.save()
-            
-            _debug_print(f"✅ Transcript stored: {len(transcript_data['transcript'])} chars")
-            
-        except Exception as transcription_error:
-            # Log error but don't fail the upload
-            _debug_print(f"⚠️ Transcription failed (will retry on submit): {transcription_error}")
-            video_response.transcript = ""  # Empty transcript, will be handled on submit
-            video_response.save()
-        
+
+        transcript_ready = False
+        transcription_task_id = None
+        if getattr(settings, "STT_ENABLED", False):
+            if getattr(settings, "INTERVIEW_PROCESSING_SYNC", False):
+                try:
+                    from .deepgram_service import get_deepgram_service
+
+                    _debug_print(
+                        f"Starting Deepgram transcription for video {video_response.id}..."
+                    )
+                    deepgram_service = get_deepgram_service()
+                    transcript_data = deepgram_service.transcribe_video(
+                        video_response.video_file_path.path,
+                        video_response_id=video_response.id,
+                    )
+                    video_response.transcript = transcript_data.get('transcript', '') or ''
+                    video_response.status = 'uploaded'
+                    video_response.save(update_fields=["transcript", "status"])
+                    transcript_ready = bool(video_response.transcript)
+                    _debug_print(f"Transcript stored: {len(video_response.transcript)} chars")
+                except Exception as transcription_error:
+                    _debug_print(
+                        f"Transcription failed (will retry on submit): {transcription_error}"
+                    )
+                    video_response.transcript = ""
+                    video_response.save(update_fields=["transcript"])
+            else:
+                transcription_task_id = str(uuid.uuid4())
+
+                def queue_transcription():
+                    transcribe_video_response.apply_async(
+                        args=[video_response.id],
+                        task_id=transcription_task_id,
+                    )
+
+                transaction.on_commit(queue_transcription)
+
         response_data = VideoResponseSerializer(video_response).data
         
         return Response(
             {
-                'message': 'Video uploaded and transcribed successfully. AI analysis will begin after interview submission.',
+                'message': (
+                    'Video uploaded and transcribed successfully. AI analysis will begin after interview submission.'
+                    if transcript_ready
+                    else 'Video uploaded. Transcription queued for background processing.'
+                ),
                 'video_response': response_data,
-                'transcript_ready': bool(video_response.transcript)
+                'transcript_ready': transcript_ready,
+                'transcription_task_id': transcription_task_id,
             },
             status=status.HTTP_201_CREATED
         )
@@ -829,11 +847,14 @@ class InterviewViewSet(viewsets.ModelViewSet):
         """
         interview = self.get_object()
 
-        if interview.status in ["submitted", "processing", "completed", "failed"]:
-            return Response(
-                {"detail": "Interview already submitted."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        force = str(request.data.get("force", "")).lower() in {"true", "1", "yes"}
+        if interview.processing_status in {"QUEUED", "RUNNING", "SUCCEEDED"}:
+            payload = build_processing_status_payload(interview)
+            return Response(payload, status=status.HTTP_202_ACCEPTED)
+        if interview.processing_status == "FAILED" and not force:
+            payload = build_processing_status_payload(interview)
+            payload["detail"] = "Interview processing failed. Use force=true to requeue."
+            return Response(payload, status=status.HTTP_409_CONFLICT)
         
         _debug_print(f"\n=== INTERVIEW SUBMISSION REQUEST ===")
         _debug_print(f"Interview ID: {interview.id}")
@@ -891,10 +912,9 @@ class InterviewViewSet(viewsets.ModelViewSet):
         _debug_print(f"✅ All validations passed!")
         
         # Mark interview as submitted and start processing
-        from django.utils import timezone
         interview.status = 'submitted'
         interview.submission_date = timezone.now()
-        interview.save()
+        interview.save(update_fields=["status", "submission_date"])
         try:
             applicant = interview.applicant
             if applicant:
@@ -903,33 +923,34 @@ class InterviewViewSet(viewsets.ModelViewSet):
         except Exception:
             pass
         
-        # Create processing queue entry
-        from processing.models import ProcessingQueue
-        queue_entry = ProcessingQueue.objects.create(
-            interview=interview,
-            processing_type='bulk_analysis',
-            status='pending'
-        )
-        
-        
+        enqueue_result = None
         try:
-            from .tasks import analyze_interview
-            from django.db import transaction
+            enqueue_result = enqueue_interview_processing(interview.id, force=force)
 
-            def queue_celery_task():
-                analyze_interview.delay(interview.id)
-                _debug_print(f"Celery task queued for interview {interview.id}")
+            if enqueue_result:
+                if getattr(settings, "INTERVIEW_PROCESSING_SYNC", False):
+                    process_complete_interview.apply(args=[interview.id], task_id=enqueue_result["task_id"])
+                else:
+                    def queue_celery_task():
+                        process_complete_interview.apply_async(
+                            args=[interview.id],
+                            task_id=enqueue_result["task_id"],
+                        )
+                        _debug_print(f"Celery task queued for interview {interview.id}")
 
-            transaction.on_commit(queue_celery_task)
+                    transaction.on_commit(queue_celery_task)
         except Exception as e:
             _debug_print(f"Non-fatal: failed to queue analysis task for interview {interview.id}: {e}")
 
-        return Response({
-            'message': 'Interview submitted successfully. AI analysis in progress.',
-            'queue_id': queue_entry.id,
-            'status': 'processing',
-            'estimated_completion_minutes': 2
-        })
+        return Response(
+            {
+                'status': 'QUEUED',
+                'interview_id': interview.id,
+                'task_id': enqueue_result.get("task_id") if enqueue_result else None,
+                'queue_id': enqueue_result.get("queue_id") if enqueue_result else None,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
     
     @action(detail=True, methods=['get'], url_path='processing-status')
     def processing_status(self, request, pk=None):
@@ -939,50 +960,8 @@ class InterviewViewSet(viewsets.ModelViewSet):
         GET /api/interviews/{id}/processing-status/
         """
         interview = self.get_object()
-        
-        # Get processing queue entry
-        from processing.models import ProcessingQueue
-        try:
-            queue_entry = ProcessingQueue.objects.filter(
-                interview=interview,
-                processing_type='bulk_analysis'
-            ).latest('created_at')
-        except ProcessingQueue.DoesNotExist:
-            return Response({
-                'error': 'No processing queue found for this interview'
-            }, status=status.HTTP_404_NOT_FOUND)
-        
-        # Calculate progress
-        total_videos = interview.video_responses.count()
-        processed_videos = interview.video_responses.filter(status='analyzed').count()
-        remaining = total_videos - processed_videos
-        
-        # Estimate time remaining (assume 10 seconds per video)
-        estimated_seconds = remaining * 10
-        
-        if estimated_seconds < 60:
-            estimated_time = f"{estimated_seconds} seconds"
-        else:
-            estimated_minutes = estimated_seconds // 60
-            estimated_time = f"{estimated_minutes} minute{'s' if estimated_minutes > 1 else ''}"
-        
-        response_data = {
-            'status': queue_entry.status,
-            'progress': {
-                'total_videos': total_videos,
-                'processed': processed_videos,
-                'remaining': remaining
-            },
-            'estimated_time_remaining': estimated_time
-        }
-        
-        if queue_entry.status == 'completed':
-            response_data['message'] = 'Processing complete! Redirecting to results...'
-        elif queue_entry.status == 'failed':
-            response_data['message'] = 'Processing failed. Please contact support.'
-            response_data['error'] = queue_entry.error_message
-        
-        return Response(response_data)
+        payload = build_processing_status_payload(interview)
+        return Response(payload)
     
     @action(detail=True, methods=['get'], url_path='video-responses')
     def list_video_responses(self, request, pk=None):

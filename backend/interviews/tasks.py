@@ -46,7 +46,30 @@ GUARD_HIT_TTL_SECONDS = 3600
 RETRY_COUNT_TTL_SECONDS = 900
 
 
+def _extract_http_status(exc: Exception):
+    response = getattr(exc, "response", None)
+    if response is not None:
+        status_code = getattr(response, "status_code", None)
+        if status_code:
+            return int(status_code)
+    status_code = getattr(exc, "status_code", None)
+    if status_code:
+        return int(status_code)
+    status_code = getattr(exc, "status", None)
+    if status_code:
+        return int(status_code)
+    return None
+
+
+def _is_non_retryable_provider_error(exc: Exception) -> bool:
+    status_code = _extract_http_status(exc)
+    return status_code in {400, 401, 403, 404}
+
+
 def _is_transient_error(exc: Exception) -> bool:
+    status_code = _extract_http_status(exc)
+    if status_code in {429} or (status_code and status_code >= 500):
+        return True
     return isinstance(exc, TRANSIENT_EXCEPTIONS)
 
 def _increment_cache_counter(key: str, ttl_seconds: int) -> None:
@@ -72,10 +95,25 @@ def _mark_terminal_failure(interview, queue_entry, error_message: str):
         interview.status = 'failed'
         interview.error_message = error_message
         interview.completed_at = timezone.now()
-        interview.save(update_fields=['status', 'error_message', 'completed_at'])
+        interview.processing_status = "FAILED"
+        interview.processing_error = error_message
+        interview.processing_finished_at = timezone.now()
+        interview.save(
+            update_fields=[
+                'status',
+                'error_message',
+                'completed_at',
+                'processing_status',
+                'processing_error',
+                'processing_finished_at',
+            ]
+        )
 
 
 def _retry_with_backoff(self, exc: Exception, target_id: int, queue_entry=None):
+    if _is_non_retryable_provider_error(exc):
+        logger.error("Non-retryable provider error for task target %s: %s", target_id, exc)
+        raise
     if not _is_transient_error(exc):
         logger.error("Non-transient error for task target %s: %s", target_id, exc)
         raise
@@ -128,12 +166,21 @@ def process_complete_interview(self, interview_id):
     monotonic_start = time.monotonic()
     interview = None
     queue_entry = None
+    lock_key = f"interview_processing_lock:{interview_id}"
+    lock_acquired = False
 
     logger.info("Interview %s task start (task_id=%s)", interview_id, self.request.id)
 
     try:
+        lock_acquired = cache.add(lock_key, "1", timeout=1800)
+        if not lock_acquired:
+            _record_guard_hit(interview_id, "lock_active")
+            return {'status': 'skipped', 'reason': 'lock_active'}
         with transaction.atomic():
             interview = Interview.objects.select_for_update().get(id=interview_id)
+            if interview.processing_status == "SUCCEEDED":
+                _record_guard_hit(interview_id, "processing_succeeded")
+                return {'status': 'skipped', 'reason': 'processing_succeeded'}
             if interview.status in ['completed', 'failed']:
                 _record_guard_hit(interview_id, f"status_{interview.status}")
                 return {'status': 'skipped', 'reason': interview.status}
@@ -156,15 +203,30 @@ def process_complete_interview(self, interview_id):
                     _record_guard_hit(interview_id, "processing_no_queue")
                     return {'status': 'skipped', 'reason': 'processing'}
 
+            interview.processing_status = "RUNNING"
+            interview.processing_started_at = timezone.now()
+            interview.processing_task_id = self.request.id
+            interview.processing_error = None
             if interview.status != 'processing':
                 interview.status = 'processing'
-                interview.save(update_fields=['status'])
+            interview.save(
+                update_fields=[
+                    'status',
+                    'processing_status',
+                    'processing_started_at',
+                    'processing_task_id',
+                    'processing_error',
+                ]
+            )
 
-        logger.info(f"AI analysis started for interview {interview_id}")
+        logger.info("AI analysis started", extra={"interview_id": interview_id, "stage": "start"})
         
         # Get all video responses
         video_responses = list(interview.video_responses.all())
-        logger.info(f"Found {len(video_responses)} video responses to process")
+        logger.info(
+            "Video responses loaded",
+            extra={"interview_id": interview_id, "stage": "load_videos", "count": len(video_responses)},
+        )
         
         # Check if transcripts are already available (from upload step)
         from interviews.deepgram_service import get_deepgram_service
@@ -173,19 +235,42 @@ def process_complete_interview(self, interview_id):
         
         # Transcribe any videos that don't have transcripts yet (fallback)
         if videos_needing_transcription:
-            logger.warning(f"Found {len(videos_needing_transcription)} videos without transcripts, transcribing now...")
+            logger.warning(
+                "Transcribing missing transcripts",
+                extra={
+                    "interview_id": interview_id,
+                    "stage": "transcribe_missing",
+                    "count": len(videos_needing_transcription),
+                    "provider": "deepgram",
+                },
+            )
             deepgram_service = get_deepgram_service()
             for vr in videos_needing_transcription:
                 try:
+                    logger.info(
+                        "Deepgram transcription request",
+                        extra={"interview_id": interview_id, "video_response_id": vr.id, "provider": "deepgram"},
+                    )
                     transcript_data = deepgram_service.transcribe_video(
                         vr.video_file_path.path,
                         video_response_id=vr.id
                     )
                     vr.transcript = transcript_data['transcript']
                     vr.save()
-                    logger.info(f"Transcribed video {vr.id}")
+                    logger.info(
+                        "Deepgram transcription stored",
+                        extra={"interview_id": interview_id, "video_response_id": vr.id, "provider": "deepgram"},
+                    )
                 except Exception as trans_error:
-                    logger.error(f"Failed to transcribe video {vr.id}: {trans_error}")
+                    logger.error(
+                        "Deepgram transcription failed",
+                        extra={
+                            "interview_id": interview_id,
+                            "video_response_id": vr.id,
+                            "provider": "deepgram",
+                            "error": str(trans_error),
+                        },
+                    )
                     vr.transcript = ""
                     vr.save()
         
@@ -213,7 +298,10 @@ def process_complete_interview(self, interview_id):
         ]
         
         # Analyze all transcripts in ONE API call
-        logger.info(f"Running batch LLM analysis for {len(transcripts_data)} transcripts...")
+        logger.info(
+            "Running batch LLM analysis",
+            extra={"interview_id": interview_id, "stage": "llm_batch", "count": len(transcripts_data)},
+        )
         ai_service = get_ai_service()
         analyses = ai_service.batch_analyze_transcripts(
             transcripts_data,
@@ -235,7 +323,10 @@ def process_complete_interview(self, interview_id):
                 try:
                     script_detection = detect_script_reading(video_response.video_file_path.path)
                 except Exception as e:
-                    logger.error(f"Script detection failed for video {video_response.id}: {e}")
+                    logger.error(
+                        "Script detection failed",
+                        extra={"interview_id": interview_id, "video_response_id": video_response.id, "error": str(e)},
+                    )
                     script_detection = {'status': 'clear', 'risk_score': 0, 'data': {'error': str(e)}}
                 
                 with transaction.atomic():
@@ -277,19 +368,29 @@ def process_complete_interview(self, interview_id):
                         video_response.processed = True
                         video_response.status = 'analyzed'
                         video_response.save()
-                        logger.info(f"Saved LLM analysis for video {video_response.id}")
+                        logger.info(
+                            "Saved LLM analysis",
+                            extra={"interview_id": interview_id, "video_response_id": video_response.id},
+                        )
             except Exception as save_error:
-                logger.error(f"Failed to save analysis for video {video_response.id}: {save_error}")
+                logger.error(
+                    "Failed to save analysis",
+                    extra={
+                        "interview_id": interview_id,
+                        "video_response_id": video_response.id,
+                        "error": str(save_error),
+                    },
+                )
                 video_response.status = 'failed'
                 video_response.save()
         
-        logger.info("All video analyses complete. Checking authenticity...")
+        logger.info("All video analyses complete", extra={"interview_id": interview_id, "stage": "authenticity"})
         
         # Check for script reading and update interview-level authenticity flag
         interview.check_authenticity()
         interview.refresh_from_db()
         
-        logger.info("Calculating interview score...")
+        logger.info("Calculating interview score", extra={"interview_id": interview_id, "stage": "score"})
         
         # Calculate overall score
         calculate_interview_score(interview_id)
@@ -300,7 +401,9 @@ def process_complete_interview(self, interview_id):
         # Update interview status
         interview.status = 'completed'
         interview.completed_at = timezone.now()
-        interview.save(update_fields=['status', 'completed_at'])
+        interview.processing_status = "SUCCEEDED"
+        interview.processing_finished_at = timezone.now()
+        interview.save(update_fields=['status', 'completed_at', 'processing_status', 'processing_finished_at'])
         
         # Update queue
         if queue_entry:
@@ -316,7 +419,10 @@ def process_complete_interview(self, interview_id):
             logger.exception("Failed to queue notification for interview %s", interview_id)
         
         elapsed_ms = int((time.monotonic() - monotonic_start) * 1000)
-        logger.info(f"AI analysis complete for interview {interview_id} in {elapsed_ms}ms")
+        logger.info(
+            "AI analysis complete",
+            extra={"interview_id": interview_id, "elapsed_ms": elapsed_ms, "stage": "complete"},
+        )
         
         return {
             'status': 'success',
@@ -325,6 +431,16 @@ def process_complete_interview(self, interview_id):
         }
         
     except Exception as e:
+        if _is_non_retryable_provider_error(e):
+            logger.error(
+                "Non-retryable provider error",
+                extra={"interview_id": interview_id, "error": str(e)},
+            )
+            try:
+                _mark_terminal_failure(interview, queue_entry, str(e))
+            except Exception:
+                logger.exception("Failed to mark terminal failure for interview %s", interview_id)
+            return {'status': 'failed', 'interview_id': interview_id}
         logger.error(f"Error processing interview {interview_id}: {str(e)}", exc_info=True)
         try:
             _retry_with_backoff(self, e, interview_id, queue_entry=queue_entry)
@@ -336,9 +452,66 @@ def process_complete_interview(self, interview_id):
             except Exception:
                 logger.exception("Failed to mark terminal failure for interview %s", interview_id)
             raise retry_error
+    finally:
+        if lock_acquired:
+            try:
+                cache.delete(lock_key)
+            except Exception:
+                logger.debug("Failed to release interview processing lock %s", lock_key)
 
 # Single public entry point for background analysis
 analyze_interview = process_complete_interview
+
+
+@shared_task(
+    bind=True,
+    max_retries=3,
+    acks_late=True,
+    reject_on_worker_lost=True,
+    soft_time_limit=120,
+    time_limit=180,
+)
+def transcribe_video_response(self, video_response_id):
+    from interviews.models import VideoResponse
+    from interviews.deepgram_service import get_deepgram_service
+
+    try:
+        video_response = VideoResponse.objects.get(id=video_response_id)
+    except VideoResponse.DoesNotExist:
+        logger.warning("VideoResponse %s not found for transcription", video_response_id)
+        return {'status': 'missing', 'video_response_id': video_response_id}
+
+    try:
+        logger.info(
+            "Deepgram transcription request",
+            extra={"video_response_id": video_response_id, "provider": "deepgram"},
+        )
+        deepgram_service = get_deepgram_service()
+        transcript_data = deepgram_service.transcribe_video(
+            video_response.video_file_path.path,
+            video_response_id=video_response.id,
+        )
+        video_response.transcript = transcript_data.get('transcript', '') or ''
+        video_response.save(update_fields=["transcript"])
+        logger.info(
+            "Deepgram transcription stored",
+            extra={"video_response_id": video_response_id, "provider": "deepgram"},
+        )
+        return {'status': 'success', 'video_response_id': video_response_id}
+    except Exception as exc:
+        if _is_non_retryable_provider_error(exc):
+            logger.error(
+                "Non-retryable transcription error",
+                extra={"video_response_id": video_response_id, "error": str(exc)},
+            )
+            return {'status': 'failed', 'video_response_id': video_response_id}
+        try:
+            _retry_with_backoff(self, exc, video_response_id)
+        except Retry:
+            raise
+        except Exception:
+            logger.exception("Transcription failed permanently for video %s", video_response_id)
+            return {'status': 'failed', 'video_response_id': video_response_id}
 
 
 @shared_task(
