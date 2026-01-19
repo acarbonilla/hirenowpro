@@ -19,7 +19,7 @@ function validateProductionApiBase() {
 function collectHrApiPathMatches() {
   const roots = ["app", "lib", "services"].map((dir) => path.join(__dirname, dir));
   const matches: string[] = [];
-  const pattern = /API_BASE_URL[^\n]*\/hr\//;
+  const pattern = /API_BASE_URL[^\n]*\/(?!api\/)hr\//;
 
   const walk = (dir: string) => {
     if (!fs.existsSync(dir)) return;
