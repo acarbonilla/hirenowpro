@@ -19,7 +19,8 @@ function validateProductionApiBase() {
 function collectHrApiPathMatches() {
   const roots = ["app", "lib", "services"].map((dir) => path.join(__dirname, dir));
   const matches: string[] = [];
-  const pattern = /API_BASE_URL[^\n]*\/(?!api\/)hr\//;
+  const hasHrApiPath = (line: string) =>
+    line.includes("API_BASE_URL") && line.includes("/hr/") && !line.includes("/api/hr/");
 
   const walk = (dir: string) => {
     if (!fs.existsSync(dir)) return;
@@ -34,7 +35,7 @@ function collectHrApiPathMatches() {
       const content = fs.readFileSync(fullPath, "utf8");
       const lines = content.split(/\r?\n/);
       lines.forEach((line, index) => {
-        if (pattern.test(line)) {
+        if (hasHrApiPath(line)) {
           matches.push(`${fullPath}:${index + 1}`);
         }
       });
