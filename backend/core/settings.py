@@ -298,22 +298,21 @@ DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'no-repl
 # AI CONFIGURATION
 # ============================
 
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', '')
-OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
-DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY', '')
-DEEPGRAM_TTS_MODEL = os.getenv('DEEPGRAM_TTS_MODEL', 'aura-2-thalia-en')
-TTS_PROVIDER = "deepgram"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY", "")
+DEEPGRAM_TTS_MODEL = os.getenv("DEEPGRAM_TTS_MODEL", "aura-2-thalia-en")
+TTS_PROVIDER = os.getenv("TTS_PROVIDER", "deepgram")
+
+TTS_ENABLED = bool(DEEPGRAM_API_KEY and TTS_PROVIDER == "deepgram")
 
 logger = logging.getLogger(__name__)
-if not DEEPGRAM_API_KEY:
-    raise RuntimeError("DEEPGRAM_API_KEY must be set for TTS")
-if DEEPGRAM_TTS_MODEL != "aura-2-thalia-en":
-    raise RuntimeError("DEEPGRAM_TTS_MODEL must be aura-2-thalia-en for production TTS")
-if TTS_PROVIDER != "deepgram":
-    raise RuntimeError("TTS_PROVIDER must be deepgram")
-logger.info("Deepgram API key loaded: %s", bool(DEEPGRAM_API_KEY))
-logger.info("Deepgram TTS model: %s", DEEPGRAM_TTS_MODEL)
-logger.info("TTS_PROVIDER=%s, model=%s", TTS_PROVIDER, DEEPGRAM_TTS_MODEL)
+
+logger.info("TTS enabled: %s", TTS_ENABLED)
+logger.info("TTS provider: %s", TTS_PROVIDER)
+logger.info("TTS model: %s", DEEPGRAM_TTS_MODEL)
+
 
 
 # ============================
