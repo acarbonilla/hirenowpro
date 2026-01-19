@@ -1,5 +1,4 @@
-import axios from "axios";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { createApiClient } from "@/lib/apiClient";
 import { getHRToken } from "../auth-hr";
 
 /**
@@ -8,8 +7,7 @@ import { getHRToken } from "../auth-hr";
 export const hrClient = () => {
   const token = getHRToken();
 
-  return axios.create({
-    baseURL: API_BASE_URL,
+  return createApiClient({
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
 };

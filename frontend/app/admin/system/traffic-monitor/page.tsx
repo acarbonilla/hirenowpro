@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { getHRToken, getHRUser, normalizeUserType } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 const ADMIN_USER_TYPES = new Set(["ADMIN", "SUPERADMIN"]);
 
@@ -81,7 +80,7 @@ export default function TrafficMonitorPage() {
   }, []);
 
   useEffect(() => {
-    if (!API_BASE_URL) {
+    if (!process.env.NEXT_PUBLIC_API_BASE_URL) {
       setError("Missing API base URL.");
       setLoading(false);
       return;
@@ -103,7 +102,7 @@ export default function TrafficMonitorPage() {
     const fetchData = async () => {
       try {
         const headers = { Authorization: `Bearer ${token}` };
-        const res = await axios.get(`${API_BASE_URL}/admin/system/traffic-monitor/`, { headers });
+        const res = await api.get("/admin/system/traffic-monitor/", { headers });
         if (mounted) {
           setData(res.data);
           setError("");

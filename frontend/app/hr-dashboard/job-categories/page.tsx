@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
 import { authAPI } from "@/lib/api";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 interface JobCategory {
   id: number;
@@ -51,7 +50,7 @@ export default function JobCategoriesPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(`${API_BASE_URL}/job-categories/`, { headers });
+      const response = await api.get("/job-categories/", { headers });
       const data = response.data.results || response.data || [];
       setCategories(data);
     } catch (err: any) {

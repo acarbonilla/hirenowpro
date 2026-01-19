@@ -3,9 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 interface Applicant {
   id: number;
@@ -106,7 +105,7 @@ export default function ApplicantsPage() {
       params.set("page", String(currentPage));
       params.set("page_size", String(itemsPerPage));
 
-      const response = await axios.get<ApplicantsResponse>(`${API_BASE_URL}/api/applicants/?${params.toString()}`, {
+      const response = await api.get<ApplicantsResponse>(`/applicants/?${params.toString()}`, {
         headers,
         timeout: 15000,
       });

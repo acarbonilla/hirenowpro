@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import axios from "axios";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 import {
   ArrowRight,
   Briefcase,
@@ -155,7 +154,7 @@ export default function OpenPositionsPage() {
 
   const fetchPositions = async () => {
     try {
-      const response = await axios.get(`${API_BASE_URL}/positions/`);
+      const response = await api.get("/positions/");
       const data = response.data.results || response.data;
       setPositions(data);
     } catch (error) {

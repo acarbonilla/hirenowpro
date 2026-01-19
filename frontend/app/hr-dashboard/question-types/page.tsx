@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 interface QuestionType {
   id: number;
@@ -42,7 +41,7 @@ export default function QuestionTypesPage() {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const response = await axios.get(`${API_BASE_URL}/question-types/`, { headers });
+      const response = await api.get("/question-types/", { headers });
       const types = response.data.results || response.data || [];
       setQuestionTypes(types);
     } catch (err: any) {
@@ -97,9 +96,9 @@ export default function QuestionTypesPage() {
       }
 
       if (editingType) {
-        await axios.patch(`${API_BASE_URL}/question-types/${editingType.id}/`, dataToSave, { headers });
+        await api.patch(`/question-types/${editingType.id}/`, dataToSave, { headers });
       } else {
-        await axios.post(`${API_BASE_URL}/question-types/`, dataToSave, { headers });
+        await api.post("/question-types/", dataToSave, { headers });
       }
 
       setShowModal(false);
@@ -116,7 +115,7 @@ export default function QuestionTypesPage() {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      await axios.delete(`${API_BASE_URL}/question-types/${id}/`, { headers });
+      await api.delete(`/question-types/${id}/`, { headers });
       fetchQuestionTypes();
     } catch (err: any) {
       alert(err.response?.data?.detail || "Failed to delete question type");
@@ -128,7 +127,7 @@ export default function QuestionTypesPage() {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      await axios.patch(`${API_BASE_URL}/question-types/${type.id}/`, { is_active: !type.is_active }, { headers });
+      await api.patch(`/question-types/${type.id}/`, { is_active: !type.is_active }, { headers });
       fetchQuestionTypes();
     } catch (err: any) {
       alert(err.response?.data?.detail || "Failed to update question type");

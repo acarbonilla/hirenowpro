@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 interface ReviewItem {
   id: number;
@@ -74,7 +73,7 @@ export default function HRReviewQueuePage() {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const res = await axios.get<ReviewResponse>(`${API_BASE_URL}/api/hr/results/summary/`, {
+      const res = await api.get<ReviewResponse>("/hr/results/summary/", {
         headers,
         params: {
           page,

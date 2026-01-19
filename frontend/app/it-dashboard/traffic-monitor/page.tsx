@@ -2,10 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { normalizeUserType } from "@/lib/auth-hr";
 import { getITToken, getITUser, clearITAuth } from "@/lib/auth-it";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 const IT_USER_TYPES = new Set(["IT_SUPPORT", "ADMIN", "SUPERADMIN"]);
 
@@ -82,7 +81,7 @@ export default function ITTrafficMonitorPage() {
   }, []);
 
   useEffect(() => {
-    if (!API_BASE_URL) {
+    if (!process.env.NEXT_PUBLIC_API_BASE_URL) {
       setError("Missing API base URL.");
       setLoading(false);
       return;
@@ -104,7 +103,7 @@ export default function ITTrafficMonitorPage() {
     const fetchData = async () => {
       try {
         const headers = { Authorization: `Bearer ${token}`, "X-Portal": "IT" };
-        const res = await axios.get(`${API_BASE_URL}/admin/system/traffic-monitor/`, { headers });
+        const res = await api.get("/admin/system/traffic-monitor/", { headers });
         if (mounted) {
           setData(res.data);
           setError("");

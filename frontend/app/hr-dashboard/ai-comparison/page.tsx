@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 interface ComparisonData {
   response_id: number;
@@ -56,7 +55,7 @@ export default function AIComparisonPage() {
       }
 
       // Fetch interviews directly to get video responses with HR overrides
-      const interviewsResponse = await axios.get(`${API_BASE_URL}/interviews/`, {
+      const interviewsResponse = await api.get("/interviews/", {
         headers: { Authorization: `Bearer ${token}` },
       });
       const interviews = interviewsResponse.data.results || interviewsResponse.data || [];

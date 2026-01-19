@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 interface TokenStats {
   total_requests: number;
@@ -73,9 +72,9 @@ export default function TokenMonitoringPage() {
 
       // Fetch all data in parallel
       const [statsRes, usageRes, breakdownRes] = await Promise.all([
-        axios.get(`${API_BASE_URL}/token-usage/statistics/`, { headers }),
-        axios.get(`${API_BASE_URL}/token-usage/?page_size=20`, { headers }),
-        axios.get(`${API_BASE_URL}/token-usage/by-operation/`, { headers }),
+        api.get("/token-usage/statistics/", { headers }),
+        api.get("/token-usage/?page_size=20", { headers }),
+        api.get("/token-usage/by-operation/", { headers }),
       ]);
 
       setStats(statsRes.data);

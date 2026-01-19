@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
 import { authAPI } from "@/lib/api";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 import { Plus, Edit2, Trash2, Save, X, Briefcase } from "lucide-react";
 
 interface Position {
@@ -94,7 +93,7 @@ export default function PositionsManagementPage() {
         return;
       }
 
-      const response = await axios.get(`${API_BASE_URL}/api/positions/`, {
+      const response = await api.get("/positions/", {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -111,7 +110,7 @@ export default function PositionsManagementPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(`${API_BASE_URL}/api/offices/`, { headers });
+      const response = await api.get("/offices/", { headers });
       const data = response.data.results || response.data || [];
       setOfficesOptions(data);
     } catch (err) {
@@ -123,7 +122,7 @@ export default function PositionsManagementPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(`${API_BASE_URL}/api/job-categories/`, { headers });
+      const response = await api.get("/job-categories/", { headers });
       const data = response.data.results || response.data || [];
       setCategoriesOptions(data);
     } catch (err) {
@@ -224,12 +223,12 @@ export default function PositionsManagementPage() {
 
       if (editingPosition) {
         // Update existing position
-        await axios.put(`${API_BASE_URL}/api/positions/${editingPosition.id}/`, payload, {
+        await api.put(`/positions/${editingPosition.id}/`, payload, {
           headers: { Authorization: `Bearer ${token}` },
         });
       } else {
         // Create new position
-        await axios.post(`${API_BASE_URL}/api/positions/`, payload, {
+        await api.post("/positions/", payload, {
           headers: { Authorization: `Bearer ${token}` },
         });
       }
@@ -258,7 +257,7 @@ export default function PositionsManagementPage() {
         return;
       }
 
-      await axios.delete(`${API_BASE_URL}/api/positions/${id}/`, {
+      await api.delete(`/positions/${id}/`, {
         headers: { Authorization: `Bearer ${token}` },
       });
 
@@ -281,8 +280,8 @@ export default function PositionsManagementPage() {
         return;
       }
 
-      await axios.patch(
-        `${API_BASE_URL}/api/positions/${position.id}/`,
+      await api.patch(
+        `/positions/${position.id}/`,
         { is_active: !position.is_active },
         {
           headers: { Authorization: `Bearer ${token}` },

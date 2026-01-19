@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import axios from "axios";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 
 export default function ApplicationStatusPage() {
@@ -22,7 +21,7 @@ export default function ApplicationStatusPage() {
           return;
         }
 
-        const res = await axios.get(`${API_BASE_URL}/applicants/me/status/`, {
+        const res = await api.get("/applicants/me/status/", {
           headers: {
             Authorization: `Bearer ${token}`,
           },

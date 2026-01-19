@@ -2,12 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { normalizeUserType } from "@/lib/auth-hr";
 import { getITToken, getITUser, clearITAuth } from "@/lib/auth-it";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
-const ADMIN_URL = API_BASE_URL.replace(/\/api\/?$/, "") + "/admin/";
+const ADMIN_URL = `${process.env.NEXT_PUBLIC_API_BASE_URL || ""}/admin/`;
 
 interface TokenStats {
   total_requests: number;
@@ -54,7 +53,7 @@ export default function ITDashboard() {
     }
 
       // Verify IT Support access
-      const authRes = await axios.get(`${API_BASE_URL}/api/auth/check/`, {
+      const authRes = await api.get("/auth/check/", {
         headers: { Authorization: `Bearer ${token}`, "X-Portal": "IT" },
       });
 
@@ -89,7 +88,7 @@ export default function ITDashboard() {
       const token = getITToken();
       const headers = { Authorization: `Bearer ${token}` };
 
-      const statsRes = await axios.get(`${API_BASE_URL}/token-usage/statistics/`, { headers });
+      const statsRes = await api.get("/token-usage/statistics/", { headers });
       setStats(statsRes.data);
     } catch (error: any) {
       console.error("Error fetching stats:", error);

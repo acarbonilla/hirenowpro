@@ -1,10 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import axios from "axios";
 import { useRouter } from "next/navigation";
 import { getHRToken } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const DATE_FILTERS = [
   { value: "all", label: "All" },
@@ -69,7 +68,7 @@ export default function HRResultsPage() {
     const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
     try {
-      const res = await axios.get(`${API_BASE_URL}/api/hr/results/summary/`, {
+      const res = await api.get("/hr/results/summary/", {
         headers,
         params: {
           page,

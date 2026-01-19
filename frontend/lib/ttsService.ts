@@ -1,5 +1,4 @@
-import axios from "axios";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { publicApi } from "@/lib/apiClient";
 const VOICE_ID = "thalia";
 const LANGUAGE = "en-US";
 export const TTS_PROVIDER = "deepgram";
@@ -50,12 +49,8 @@ const fetchAudio = async (interviewId: number, text: string, cacheKey?: string) 
   const inflightRequest = inflight.get(key);
   if (inflightRequest) return inflightRequest;
 
-  const request = axios
-    .post(
-      `${API_BASE_URL}/public/interviews/${interviewId}/tts/`,
-      { text },
-      { responseType: "arraybuffer", timeout: 20000 }
-    )
+  const request = publicApi
+    .post(`/interviews/${interviewId}/tts/`, { text }, { responseType: "arraybuffer", timeout: 20000 })
     .then((response) => {
       audioCache.set(key, response.data);
       return response.data;

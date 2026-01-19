@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Webcam from "react-webcam";
-import { interviewAPI, api, API_BASE_URL } from "@/lib/api";
+import { interviewAPI, api } from "@/lib/api";
+import { api as apiClient } from "@/lib/apiClient";
 import { getApplicantToken } from "@/app/utils/auth-applicant";
 import { useStore } from "@/store/useStore";
 import { ttsService, TTS_PROVIDER } from "@/lib/ttsService";
@@ -227,7 +228,7 @@ export default function InterviewPage() {
       const requestBody = { integrity: payload };
       if (mode === "unload" && typeof navigator !== "undefined" && navigator.sendBeacon) {
         try {
-          const url = `${API_BASE_URL}/public/interviews/${interviewId}/integrity/`;
+          const url = apiClient.getUri({ url: `/public/interviews/${interviewId}/integrity/` });
           const blob = new Blob([JSON.stringify(requestBody)], { type: "application/json" });
           navigator.sendBeacon(url, blob);
           return;
@@ -237,7 +238,7 @@ export default function InterviewPage() {
       }
 
       try {
-        await api.post(`/public/interviews/${interviewId}/integrity/`, requestBody);
+        await apiClient.post(`/public/interviews/${interviewId}/integrity/`, requestBody);
       } catch (err) {
         console.warn("Integrity logging failed", err);
       }

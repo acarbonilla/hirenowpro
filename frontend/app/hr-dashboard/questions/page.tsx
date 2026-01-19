@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 interface TypeDetail {
   id: number;
@@ -97,11 +96,11 @@ export default function QuestionsPage() {
       if (competencyFilter) {
         params.set("competency", competencyFilter);
       }
-      let nextUrl = `${API_BASE_URL}/questions/`;
+      let nextUrl = "/questions/";
 
       // First try with large page size
       const query = params.toString();
-      const firstResponse = await axios.get(
+      const firstResponse = await api.get(
         `${nextUrl}?page_size=1000${query ? `&${query}` : ""}`,
         { headers },
       );
@@ -113,7 +112,7 @@ export default function QuestionsPage() {
 
         // Fetch remaining pages if any
         while (nextUrl) {
-          const response = await axios.get(nextUrl, { headers });
+          const response = await api.get(nextUrl, { headers });
           allQuestions = [...allQuestions, ...response.data.results];
           nextUrl = response.data.next;
         }
@@ -145,7 +144,7 @@ export default function QuestionsPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(`${API_BASE_URL}/position-types/?page_size=100`, { headers });
+      const response = await api.get("/position-types/?page_size=100", { headers });
       const types = response.data.results || response.data || [];
       setPositionTypes(types);
     } catch (err) {
@@ -157,7 +156,7 @@ export default function QuestionsPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(`${API_BASE_URL}/question-types/?page_size=100`, { headers });
+      const response = await api.get("/question-types/?page_size=100", { headers });
       const types = response.data.results || response.data || [];
       setQuestionTypes(types);
     } catch (err) {
@@ -309,10 +308,10 @@ export default function QuestionsPage() {
 
       if (editingQuestion) {
         // Update existing question
-        await axios.patch(`${API_BASE_URL}/questions/${editingQuestion.id}/`, payload, { headers });
+        await api.patch(`/questions/${editingQuestion.id}/`, payload, { headers });
       } else {
         // Create new question
-        await axios.post(`${API_BASE_URL}/questions/`, payload, { headers });
+        await api.post("/questions/", payload, { headers });
       }
 
       setShowAddModal(false);
@@ -375,7 +374,7 @@ export default function QuestionsPage() {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      await axios.delete(`${API_BASE_URL}/questions/${id}/`, { headers });
+      await api.delete(`/questions/${id}/`, { headers });
       fetchQuestions(); // Refresh the list
     } catch (err: any) {
       console.error("Error deleting question:", err);

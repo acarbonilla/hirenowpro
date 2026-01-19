@@ -3,9 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api, isCancel } from "@/lib/apiClient";
 
 interface ApplicantHistory {
   id: number;
@@ -101,9 +100,9 @@ export default function ApplicantHistoryPage() {
       if (scoreMax) params.append("score_max", scoreMax);
       if (hasInterview !== "all") params.append("has_interview", hasInterview);
 
-      const url = `${API_BASE_URL}/api/applicants/history/?${params.toString()}`;
+      const url = `/applicants/history/?${params.toString()}`;
 
-      const response = await axios.get(url, {
+      const response = await api.get(url, {
         headers,
         timeout: 15000,
         signal: controller.signal,
@@ -120,7 +119,7 @@ export default function ApplicantHistoryPage() {
         })
       );
     } catch (err: any) {
-      if (axios.isCancel(err)) return;
+      if (isCancel(err)) return;
 
       console.error("Fetch error:", err);
       setError(err.response?.data?.detail || "Failed to load applicant history");

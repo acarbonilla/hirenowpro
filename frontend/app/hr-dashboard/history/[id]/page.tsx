@@ -3,9 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 import { resolveVideoUrl } from "@/lib/media";
 import VideoPlayer from "@/components/VideoPlayer";
 
@@ -98,7 +97,7 @@ export default function ApplicantDetailHistoryPage() {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      const response = await axios.get(`${API_BASE_URL}/api/applicants/${applicantId}/full-history/`, { headers });
+      const response = await api.get(`/applicants/${applicantId}/full-history/`, { headers });
       const data = response.data;
       setApplicant(data);
 
@@ -120,7 +119,7 @@ export default function ApplicantDetailHistoryPage() {
     try {
       const token = getHRToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const response = await axios.get(`${API_BASE_URL}/api/hr/interviews/${interviewId}/`, { headers });
+      const response = await api.get(`/hr/interviews/${interviewId}/`, { headers });
       const responses = response.data?.video_responses || [];
       const scriptById = new Map(
         responses.map((video: any) => [

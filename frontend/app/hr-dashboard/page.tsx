@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { hrClient, getHRToken } from "@/lib/axios/hrClient";
+import { getHRToken } from "@/lib/axios/hrClient";
+import { api } from "@/lib/apiClient";
 
 interface DashboardStats {
   total_applicants: number;
@@ -53,7 +54,8 @@ export default function HRDashboardPage() {
     setError("");
 
     try {
-      const api = hrClient();
+      const token = getHRToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       // Temporarily removed heavy /results/ call; rely on lightweight overview
       // const [resultsRes, interviewsRes, applicantsRes] = await Promise.all([
@@ -61,7 +63,7 @@ export default function HRDashboardPage() {
       //   api.get("/interviews/"),
       //   api.get("/applicants/"),
       // ]);
-      const overviewRes = await api.get("/api/hr/dashboard/overview/");
+      const overviewRes = await api.get("/hr/dashboard/overview/", { headers });
       const data = overviewRes.data || {};
 
       setStats({

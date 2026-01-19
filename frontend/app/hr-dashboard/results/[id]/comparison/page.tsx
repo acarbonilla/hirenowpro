@@ -3,9 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import axios from "axios";
 import { getHRToken } from "@/lib/auth-hr";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api } from "@/lib/apiClient";
 
 interface Result {
   id: number;
@@ -60,7 +59,7 @@ export default function ComparisonPage() {
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
       // Fetch all results first
-      const allResultsRes = await axios.get(`${API_BASE_URL}/results/`, { headers });
+      const allResultsRes = await api.get("/results/", { headers });
       const allResultsData = allResultsRes.data.results || allResultsRes.data || [];
 
       // Find the current result from the list

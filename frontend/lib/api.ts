@@ -1,18 +1,12 @@
-import axios, { type AxiosRequestConfig } from "axios";
-import { API_BASE_URL } from "@/lib/apiBase";
+import { api, publicApi } from "@/lib/apiClient";
 
-// Create axios instance with default config
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  headers: {
-    "Content-Type": "application/json",
-  },
-});
+type RequestConfig = {
+  headers?: Record<string, string>;
+  params?: Record<string, unknown>;
+  [key: string]: unknown;
+};
 
-export const publicAPI = axios.create({
-  baseURL: `${API_BASE_URL}/public`,
-  timeout: 10000,
-});
+api.defaults.headers.common["Content-Type"] = "application/json";
 
 // Request interceptor
 api.interceptors.request.use(
@@ -21,8 +15,8 @@ api.interceptors.request.use(
     // We use partial matching, so "/applicants/" matches "/api/applicants/"
     const publicEndpoints = [
       "/applicants/",
-      "/api/auth/login/",
-      "/api/auth/register/",
+      "/auth/login/",
+      "/auth/register/",
       "/interviews/",
       "/analysis/",
     ];
@@ -109,7 +103,7 @@ export const interviewAPI = {
       position_code: data.position_code,
       interview_type: data.interview_type,
     };
-    return publicAPI.post("/interviews/", payload);
+    return publicApi.post("/interviews/", payload);
   },
 
   // Alias for createInterview
@@ -117,11 +111,11 @@ export const interviewAPI = {
     api.post("/interviews/", { ...data, interview_type: data.interview_type || "initial_ai" }),
 
   // Get interview details
-  getInterview: (id: number, config?: AxiosRequestConfig) => publicAPI.get(`/interviews/${id}/`, config),
+  getInterview: (id: number, config?: RequestConfig) => publicApi.get(`/interviews/${id}/`, config),
 
   // Upload video response (no immediate analysis)
-  uploadVideoResponse: (interviewId: number, formData: FormData, config?: AxiosRequestConfig) => {
-    return publicAPI.post(`/interviews/${interviewId}/video-response/`, formData, {
+  uploadVideoResponse: (interviewId: number, formData: FormData, config?: RequestConfig) => {
+    return publicApi.post(`/interviews/${interviewId}/video-response/`, formData, {
       headers: {
         "Content-Type": "multipart/form-data",
         ...(config?.headers || {}),
@@ -138,17 +132,18 @@ export const interviewAPI = {
   completeInterview: (id: number) => api.post(`/interviews/${id}/complete/`),
 
   // List interviews
-  listInterviews: (params?: any) => publicAPI.get("/interviews/", { params }),
+  listInterviews: (params?: Record<string, unknown>) => publicApi.get("/interviews/", { params }),
 
   // Get interview analysis
   getAnalysis: (id: number) => api.get(`/interviews/${id}/analysis/`),
 };
 
-export { api, API_BASE_URL };
+export const publicAPI = publicApi;
+export { api };
 
 export const questionAPI = {
   // Get all active questions (with optional position and type filters)
-  getQuestions: (interviewId: number) => publicAPI.get(`/interviews/${interviewId}/questions/`),
+  getQuestions: (interviewId: number) => publicApi.get(`/interviews/${interviewId}/questions/`),
 
   // Get single question
   getQuestion: (id: number) => api.get(`/questions/${id}/`),
@@ -156,12 +151,12 @@ export const questionAPI = {
 
 export const authAPI = {
   // Login
-  login: (data: { username: string; password: string }) => api.post("/api/auth/login/", data),
-  hrLogin: (data: { username: string; password: string }) => api.post("/api/auth/hr-login/", data),
-  applicantLogin: (data: { username: string; password: string }) => api.post("/api/auth/applicant-login/", data),
+  login: (data: { username: string; password: string }) => api.post("/auth/login/", data),
+  hrLogin: (data: { username: string; password: string }) => api.post("/auth/hr-login/", data),
+  applicantLogin: (data: { username: string; password: string }) => api.post("/auth/applicant-login/", data),
 
   // Logout
-  logout: (refreshToken: string) => api.post("/api/auth/logout/", { refresh_token: refreshToken }),
+  logout: (refreshToken: string) => api.post("/auth/logout/", { refresh_token: refreshToken }),
 
   // Register
   register: (data: {
@@ -172,24 +167,24 @@ export const authAPI = {
     user_type?: string;
     first_name?: string;
     last_name?: string;
-  }) => api.post("/api/auth/register/", data),
+  }) => api.post("/auth/register/", data),
 
   // Refresh token
-  refreshToken: (refreshToken: string) => api.post("/api/auth/token/refresh/", { refresh: refreshToken }),
+  refreshToken: (refreshToken: string) => api.post("/auth/token/refresh/", { refresh: refreshToken }),
 
   // Check authentication status
-  checkAuth: (config?: AxiosRequestConfig) => api.get("/api/auth/check/", config),
+  checkAuth: (config?: RequestConfig) => api.get("/auth/check/", config),
 
   // Get user profile
-  getProfile: () => api.get("/api/auth/profile/"),
+  getProfile: () => api.get("/auth/profile/"),
 
   // Update user profile
   updateProfile: (data: { first_name?: string; last_name?: string; email?: string }) =>
-    api.patch("/api/auth/profile/", data),
+    api.patch("/auth/profile/", data),
 
   // Change password
   changePassword: (data: { old_password: string; new_password: string; new_password_confirm: string }) =>
-    api.patch("/api/auth/change-password/", data),
+    api.patch("/auth/change-password/", data),
 };
 
 export const settingsAPI = {
