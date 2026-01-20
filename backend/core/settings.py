@@ -8,6 +8,7 @@ from corsheaders.defaults import default_headers
 
 # Load environment variables
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -217,10 +218,11 @@ if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
 else:
     # Production: strict allowlist
-    CORS_ALLOWED_ORIGINS = os.getenv(
-        "CORS_ALLOWED_ORIGINS",
-        ""
-    ).split(",") if os.getenv("CORS_ALLOWED_ORIGINS") else []
+    CORS_ALLOWED_ORIGINS = [
+        origin.strip()
+        for origin in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+        if origin.strip()
+    ]
 
 CORS_ALLOW_HEADERS = list(default_headers) + [
     "authorization",
@@ -313,8 +315,6 @@ INTERVIEW_PROCESSING_SYNC = os.getenv("INTERVIEW_PROCESSING_SYNC", "false").lowe
 if not DEBUG:
     INTERVIEW_PROCESSING_SYNC = False
 
-logger = logging.getLogger(__name__)
-
 logger.info("TTS enabled: %s", TTS_ENABLED)
 logger.info("TTS provider: %s", TTS_PROVIDER)
 logger.info("TTS model: %s", DEEPGRAM_TTS_MODEL)
@@ -347,17 +347,22 @@ LOG_HR_AUTH = False
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-_raw_csrf_origins = os.getenv("CSRF_TRUSTED_ORIGINS", "")
-
 CSRF_TRUSTED_ORIGINS = [
-    o.strip()
-    for o in _raw_csrf_origins.split(",")
-    if o.strip().startswith(("http://", "https://"))
+    origin.strip()
+    for origin in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
 ]
 
+if not DEBUG:
+    CSRF_COOKIE_SAMESITE = "None"
+    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SAMESITE = "None"
+    SESSION_COOKIE_SECURE = True
 
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
+    if not CORS_ALLOWED_ORIGINS:
+        logger.warning("CORS_ALLOWED_ORIGINS is empty in production")
+    if not CSRF_TRUSTED_ORIGINS:
+        logger.warning("CSRF_TRUSTED_ORIGINS is empty in production")
 
 
 # This is for testing for production level
