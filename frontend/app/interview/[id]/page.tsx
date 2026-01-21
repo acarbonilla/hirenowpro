@@ -157,6 +157,7 @@ export default function InterviewPage() {
   const isRecordingRef = useRef(false);
   const stopRecordingRef = useRef<() => void>(() => {});
   const interviewContainerRef = useRef<HTMLDivElement | null>(null);
+  const cameraContainerRef = useRef<HTMLDivElement | null>(null);
   const integrityRef = useRef<IntegrityMetadata>({
     fullscreen: {
       supported: true,
@@ -192,6 +193,17 @@ export default function InterviewPage() {
   const handleDataAvailable = useCallback(({ data }: BlobEvent) => {
     if (data.size > 0) {
       setRecordedChunks((prev) => [...prev, data]);
+    }
+  }, []);
+
+  const scrollCameraIntoView = useCallback((behavior: ScrollBehavior = "smooth") => {
+    if (typeof window === "undefined") return;
+    const target = cameraContainerRef.current;
+    if (!target) return;
+    const rect = target.getBoundingClientRect();
+    const isVisible = rect.top >= 0 && rect.bottom <= window.innerHeight;
+    if (!isVisible) {
+      target.scrollIntoView({ behavior, block: "start" });
     }
   }, []);
 
@@ -420,6 +432,21 @@ export default function InterviewPage() {
       setShowIntegrityConsent(false);
     }
   }, [integrityConsentStorageKey]);
+
+  useEffect(() => {
+    if (!integrityAcknowledged || !interview) return;
+    scrollCameraIntoView("smooth");
+  }, [integrityAcknowledged, interview, scrollCameraIntoView]);
+
+  useEffect(() => {
+    if (!integrityAcknowledged) return;
+    scrollCameraIntoView("smooth");
+  }, [currentQuestionIndex, integrityAcknowledged, scrollCameraIntoView]);
+
+  useEffect(() => {
+    if (!integrityAcknowledged || !isRecording) return;
+    scrollCameraIntoView("smooth");
+  }, [integrityAcknowledged, isRecording, scrollCameraIntoView]);
 
   useEffect(() => {
     let mounted = true;
@@ -1570,7 +1597,11 @@ export default function InterviewPage() {
 
         <div className="grid md:grid-cols-2 gap-6">
           {/* Video Section */}
-          <div className="bg-white rounded-lg shadow-md p-6">
+          <div
+            ref={cameraContainerRef}
+            className="md:sticky md:top-4 md:z-10 md:self-start md:max-h-[calc(100vh-2rem)] md:overflow-hidden"
+          >
+            <div className="bg-white rounded-lg shadow-md p-6">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-xl font-semibold flex items-center">
                 <Camera className="w-5 h-5 mr-2" />
@@ -1810,10 +1841,11 @@ export default function InterviewPage() {
                 {successMessage}
               </div>
             )}
+            </div>
           </div>
 
           {/* Question Section */}
-          <div className="bg-white rounded-lg shadow-md p-6">
+          <div className="bg-white rounded-lg shadow-md p-6 md:max-h-[calc(100vh-2rem)] md:overflow-y-auto">
             <div className="mb-6">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-gray-600">

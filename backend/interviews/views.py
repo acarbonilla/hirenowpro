@@ -103,21 +103,56 @@ class JobPositionViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        user = getattr(self.request, "user", None)
         if self.action in ["list", "retrieve"]:
-            user = getattr(self.request, "user", None)
             if not user or not user.is_authenticated:
                 qs = qs.filter(is_active=True)
         if self.request:
             code = self.request.query_params.get("code")
             active_only = self.request.query_params.get("active_only", "false").lower() == "true"
+            is_active_param = self.request.query_params.get("is_active")
             if code:
                 qs = qs.filter(code=code)
-            if active_only:
+            if is_active_param in ["true", "false"] and user and user.is_authenticated:
+                qs = qs.filter(is_active=is_active_param == "true")
+            elif active_only:
                 qs = qs.filter(is_active=True)
         return qs.order_by("-created_at")
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
+
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="bulk-update-status",
+        permission_classes=[IsAuthenticated, IsHRUser, RolePermission(required_user_types=["HR_RECRUITER"])],
+    )
+    def bulk_update_status(self, request):
+        ids = request.data.get("ids", [])
+        is_active = request.data.get("is_active", None)
+        if not isinstance(ids, list) or not ids:
+            raise ValidationError({"ids": "Provide a non-empty list of ids."})
+        if not isinstance(is_active, bool):
+            raise ValidationError({"is_active": "Must be a boolean."})
+
+        try:
+            id_set = {int(item) for item in ids}
+        except (TypeError, ValueError):
+            raise ValidationError({"ids": "All ids must be integers."})
+
+        if not id_set:
+            raise ValidationError({"ids": "Provide at least one id."})
+
+        existing_ids = set(JobPosition.objects.filter(id__in=id_set).values_list("id", flat=True))
+        missing_ids = id_set - existing_ids
+        if missing_ids:
+            raise ValidationError({"ids": f"Unknown ids: {sorted(missing_ids)}"})
+
+        with transaction.atomic():
+            updated_count = JobPosition.objects.filter(id__in=id_set).update(is_active=is_active)
+
+        return Response({"updated": updated_count}, status=status.HTTP_200_OK)
 
 
 class QuestionTypeViewSet(viewsets.ModelViewSet):

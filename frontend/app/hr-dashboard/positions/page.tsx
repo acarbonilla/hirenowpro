@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getHRToken } from "@/lib/auth-hr";
 import { authAPI } from "@/lib/api";
@@ -38,6 +38,13 @@ export default function PositionsManagementPage() {
   const [isReadOnly, setIsReadOnly] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingPosition, setEditingPosition] = useState<Position | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
+  const [locationFilter, setLocationFilter] = useState<"all" | number>("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize] = useState(6);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const hasInitializedStatusFetch = useRef(false);
   const [officesOptions, setOfficesOptions] = useState<{ id: number; name: string; address?: string }[]>([]);
   const [categoriesOptions, setCategoriesOptions] = useState<
     { id: number; name: string; description_context?: string | null }[]
@@ -93,8 +100,14 @@ export default function PositionsManagementPage() {
         return;
       }
 
+      const params: Record<string, string> = {};
+      if (statusFilter !== "all") {
+        params.is_active = statusFilter === "active" ? "true" : "false";
+      }
+
       const response = await api.get("/positions/", {
         headers: { Authorization: `Bearer ${token}` },
+        params,
       });
 
       setPositions(response.data.results || response.data);
@@ -139,6 +152,29 @@ export default function PositionsManagementPage() {
   useEffect(() => {
     initialize();
   }, []);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setSelectedIds([]);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setSelectedIds([]);
+  }, [statusFilter]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setSelectedIds([]);
+  }, [locationFilter]);
+
+  useEffect(() => {
+    if (!hasInitializedStatusFetch.current) {
+      hasInitializedStatusFetch.current = true;
+      return;
+    }
+    fetchPositions();
+  }, [statusFilter]);
 
   const handleAdd = () => {
     if (!canEdit) {
@@ -295,6 +331,121 @@ export default function PositionsManagementPage() {
     }
   };
 
+  const handleBulkUpdate = async (isActive: boolean) => {
+    if (!canEdit) {
+      setError("You have read-only access to positions.");
+      return;
+    }
+    if (selectedIds.length === 0) {
+      return;
+    }
+
+    const confirmLabel = isActive ? "activate" : "deactivate";
+    if (!confirm(`Are you sure you want to ${confirmLabel} ${selectedIds.length} position(s)?`)) {
+      return;
+    }
+
+    try {
+      const token = getHRToken();
+      if (!token) {
+        router.push("/hr-login");
+        return;
+      }
+
+      await api.post(
+        "/positions/bulk-update-status/",
+        { ids: selectedIds, is_active: isActive },
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+
+      const updatedIds = new Set(selectedIds);
+      setPositions((prev) =>
+        prev.map((position) =>
+          updatedIds.has(position.id) ? { ...position, is_active: isActive } : position
+        )
+      );
+      setSelectedIds([]);
+      fetchPositions();
+    } catch (err: any) {
+      console.error("Error updating positions:", err);
+      setError(err.response?.data?.detail || "Failed to update positions");
+    }
+  };
+
+  const normalizedQuery = searchQuery.trim().toLowerCase();
+  const filteredPositions = normalizedQuery
+    ? positions.filter((position) => {
+        const nameMatch = position.name.toLowerCase().includes(normalizedQuery);
+        const codeMatch = position.code.toLowerCase().includes(normalizedQuery);
+        const descriptionMatch = position.description?.toLowerCase().includes(normalizedQuery);
+        const categoryMatch = position.category_detail?.name?.toLowerCase().includes(normalizedQuery);
+        const officeMatch =
+          position.offices_detail?.some((office) => office.name.toLowerCase().includes(normalizedQuery)) ?? false;
+        return nameMatch || codeMatch || descriptionMatch || categoryMatch || officeMatch;
+      })
+    : positions;
+
+  const statusFilteredPositions =
+    statusFilter === "all"
+      ? filteredPositions
+      : filteredPositions.filter((position) => position.is_active === (statusFilter === "active"));
+
+  const locationBasePositions =
+    locationFilter === "all"
+      ? filteredPositions
+      : filteredPositions.filter(
+          (position) => position.offices_detail?.some((office) => office.id === locationFilter) ?? false
+        );
+
+  const locationFilteredPositions =
+    locationFilter === "all"
+      ? statusFilteredPositions
+      : statusFilteredPositions.filter(
+          (position) => position.offices_detail?.some((office) => office.id === locationFilter) ?? false
+        );
+
+  const activeCount = locationBasePositions.filter((position) => position.is_active).length;
+  const inactiveCount = locationBasePositions.length - activeCount;
+
+  const totalPages = Math.ceil(locationFilteredPositions.length / pageSize);
+  useEffect(() => {
+    if (totalPages > 0 && currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+    if (totalPages === 0 && currentPage !== 1) {
+      setCurrentPage(1);
+    }
+  }, [currentPage, totalPages]);
+
+  const safeCurrentPage = totalPages === 0 ? 1 : currentPage;
+  const startIndex = (safeCurrentPage - 1) * pageSize;
+  const endIndex = startIndex + pageSize;
+  const paginatedPositions = locationFilteredPositions.slice(startIndex, endIndex);
+  const visibleIds = paginatedPositions.map((position) => position.id);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selectedIds.includes(id));
+  const bulkDisabled = !canEdit || selectedIds.length === 0;
+
+  const handleSelectAll = (checked: boolean) => {
+    if (!canEdit) {
+      setError("You have read-only access to positions.");
+      return;
+    }
+    if (checked) {
+      setSelectedIds((prev) => Array.from(new Set([...prev, ...visibleIds])));
+      return;
+    }
+    setSelectedIds((prev) => prev.filter((id) => !visibleIds.includes(id)));
+  };
+
+  const handleSelectPosition = (positionId: number, checked: boolean) => {
+    if (checked) {
+      setSelectedIds((prev) => (prev.includes(positionId) ? prev : [...prev, positionId]));
+      return;
+    }
+    setSelectedIds((prev) => prev.filter((id) => id !== positionId));
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
@@ -317,6 +468,17 @@ export default function PositionsManagementPage() {
               <div>
                 <h1 className="text-2xl font-bold text-gray-900">Position Management</h1>
                 <p className="text-gray-600">Manage job positions and their configurations</p>
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                  <span className="inline-flex items-center rounded-full bg-green-100 px-2.5 py-1 text-green-800">
+                    Active: {activeCount}
+                  </span>
+                  <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-gray-700">
+                    Inactive: {inactiveCount}
+                  </span>
+                  <span className="inline-flex items-center rounded-full bg-purple-100 px-2.5 py-1 text-purple-800">
+                    Results: {locationFilteredPositions.length}
+                  </span>
+                </div>
               </div>
             </div>
             <button
@@ -348,27 +510,116 @@ export default function PositionsManagementPage() {
           </div>
         )}
 
+        <div className="bg-white rounded-lg shadow-sm p-4 mb-6">
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col md:flex-row md:items-center gap-3">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search positions, code, category, office..."
+                className="w-full md:max-w-md px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              />
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as "all" | "active" | "inactive")}
+                className="w-full md:w-40 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              >
+                <option value="all">All</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+              <select
+                value={locationFilter === "all" ? "all" : String(locationFilter)}
+                onChange={(e) =>
+                  setLocationFilter(e.target.value === "all" ? "all" : Number(e.target.value))
+                }
+                className="w-full md:w-48 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              >
+                <option value="all">All locations</option>
+                {officesOptions.map((office) => (
+                  <option key={`location-${office.id}`} value={office.id}>
+                    {office.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <label className="inline-flex items-center gap-2 text-sm text-gray-600">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  onChange={(e) => handleSelectAll(e.target.checked)}
+                  disabled={!canEdit || visibleIds.length === 0}
+                  className="h-4 w-4 text-purple-600 border-gray-300 rounded"
+                />
+                Select page
+              </label>
+              <div className="inline-flex rounded-lg shadow-sm" role="group">
+                <button
+                  type="button"
+                  onClick={() => handleBulkUpdate(true)}
+                  disabled={bulkDisabled}
+                  className={`px-3 py-2 rounded-l-lg text-sm border ${
+                    bulkDisabled
+                      ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                      : "bg-green-600 text-white hover:bg-green-700 border-green-600"
+                  }`}
+                >
+                  Activate Selected
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleBulkUpdate(false)}
+                  disabled={bulkDisabled}
+                  className={`px-3 py-2 rounded-r-lg text-sm border-l-0 ${
+                    bulkDisabled
+                      ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                      : "bg-white text-red-600 border-red-200 hover:bg-red-50"
+                  }`}
+                >
+                  Deactivate Selected
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
         {/* Positions Cards */}
         {positions.length === 0 ? (
           <div className="bg-white rounded-lg shadow-sm p-8 text-center">
             <Briefcase className="h-12 w-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-600">No positions found. Add your first position to get started.</p>
           </div>
+        ) : locationFilteredPositions.length === 0 ? (
+          <div className="bg-white rounded-lg shadow-sm p-8 text-center">
+            <Briefcase className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <p className="text-gray-600">No positions match your search.</p>
+          </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {positions.map((position) => (
+            {paginatedPositions.map((position) => (
               <div
                 key={position.id}
                 className="relative bg-white border rounded-lg shadow-sm p-6 transition hover:shadow-md hover:scale-[1.01]"
               >
                 <div className="flex items-start justify-between">
-                  <div className="space-y-1">
-                    <h3 className="text-lg font-semibold text-gray-900">{position.name}</h3>
-                    {position.category_detail?.name && (
-                      <span className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">
-                        {position.category_detail.name}
-                      </span>
-                    )}
+                  <div className="flex items-start space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.includes(position.id)}
+                      onChange={(e) => handleSelectPosition(position.id, e.target.checked)}
+                      disabled={!canEdit}
+                      className="mt-1 h-4 w-4 text-purple-600 border-gray-300 rounded"
+                    />
+                    <div className="space-y-1">
+                      <h3 className="text-lg font-semibold text-gray-900">{position.name}</h3>
+                      {position.category_detail?.name && (
+                        <span className="inline-flex items-center px-2 py-1 bg-gray-100 text-gray-700 text-xs font-medium rounded-full">
+                          {position.category_detail.name}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <span
                     className={`px-3 py-1 text-xs font-semibold rounded-full ${
@@ -431,6 +682,40 @@ export default function PositionsManagementPage() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {positions.length > 0 && (
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mt-6">
+            <p className="text-sm text-gray-600">
+              Page {totalPages === 0 ? 0 : safeCurrentPage} of {totalPages}
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                disabled={safeCurrentPage <= 1}
+                className={`px-3 py-2 rounded-lg border text-sm ${
+                  safeCurrentPage <= 1
+                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                    : "bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                Prev
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentPage((prev) => Math.min(totalPages || 1, prev + 1))}
+                disabled={totalPages === 0 || safeCurrentPage >= totalPages}
+                className={`px-3 py-2 rounded-lg border text-sm ${
+                  totalPages === 0 || safeCurrentPage >= totalPages
+                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                    : "bg-white text-gray-700 hover:bg-gray-50"
+                }`}
+              >
+                Next
+              </button>
+            </div>
           </div>
         )}
       </div>
