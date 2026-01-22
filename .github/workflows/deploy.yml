@@ -103,8 +103,14 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         env:
+          CI: "true"
           NEXT_PUBLIC_API_BASE_URL: ${{ secrets.BACKEND_HEALTH_URL }}
-        run: npm run build
+        run: |
+          echo "Starting Next.js build..."
+          npm run build
+          echo "Build completed, checking output..."
+          ls -la
+          ls -la .next || echo ".next directory not found!"
 
       
       - name: Verify frontend build output
@@ -112,6 +118,8 @@ jobs:
           # .next MUST exist
           if [ ! -d frontend/.next ]; then
             echo "ERROR: frontend/.next missing"
+            echo "Listing frontend directory contents:"
+            ls -la frontend
             exit 1
           fi
       
@@ -132,14 +140,20 @@ jobs:
           ls -la frontend/public || true
           echo "=== END FRONTEND BUILD OUTPUT ==="
 
-      - name: Upload frontend artifacts
+      - name: Upload frontend .next
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-build
+          name: frontend-next
           if-no-files-found: error
-          path: |
-            frontend/.next
-            frontend/public
+          path: frontend/.next
+
+      - name: Upload frontend public (optional)
+        if: ${{ hashFiles('frontend/public/**') != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-public
+          if-no-files-found: ignore
+          path: frontend/public
 
   # =====================================================
   # DEPLOY TO SERVER
@@ -153,11 +167,18 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Download frontend artifact
+      - name: Download frontend .next artifact
         uses: actions/download-artifact@v4
         with:
-          name: frontend-build
-          path: frontend
+          name: frontend-next
+          path: frontend/.next
+
+      - name: Download frontend public artifact (optional)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-public
+          path: frontend/public
 
       - name: Verify downloaded frontend artifact
         run: |
