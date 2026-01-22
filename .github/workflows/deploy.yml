@@ -165,10 +165,11 @@ jobs:
             echo "ERROR: frontend/.next missing after download"
             exit 1
           }
-          test -d frontend/public || {
-            echo "ERROR: frontend/public missing after download"
-            exit 1
-          }
+          if [ -d frontend/public ]; then
+            echo "frontend/public exists"
+          else
+            echo "WARNING: frontend/public does not exist (this is OK)"
+          fi
 
       - name: Sanity check deploy secrets
         run: |
@@ -203,8 +204,10 @@ jobs:
           [ "${DRY_RUN}" = "1" ] && DRY="--dry-run"
           rsync -az --delete $DRY frontend/.next/ \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/frontend/.next/"
-          rsync -az --delete $DRY frontend/public/ \
-            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/frontend/public/"
+          if [ -d frontend/public ]; then
+            rsync -az --delete $DRY frontend/public/ \
+              "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/frontend/public/"
+          fi
 
       - name: Restart frontend & nginx
         if: ${{ env.DRY_RUN != '1' }}
