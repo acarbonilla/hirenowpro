@@ -112,10 +112,9 @@ jobs:
             echo "ERROR: frontend/.next missing"
             exit 1
           }
-          test -d frontend/public || {
-            echo "ERROR: frontend/public missing"
-            exit 1
-          }
+          if [ ! -d frontend/public ]; then
+            echo "WARN: frontend/public missing (no static assets)"
+          fi
 
       - name: Debug frontend build output
         if: ${{ env.DEBUG_CI == '1' }}
