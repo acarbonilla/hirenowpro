@@ -106,16 +106,22 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: ${{ secrets.BACKEND_HEALTH_URL }}
         run: npm run build
 
+      
       - name: Verify frontend build output
         run: |
-          test -d frontend/.next || {
+          # .next MUST exist
+          if [ ! -d frontend/.next ]; then
             echo "ERROR: frontend/.next missing"
             exit 1
-          }
-          if [ ! -d frontend/public ]; then
-            echo "WARN: frontend/public missing (no static assets)"
           fi
-
+      
+          # public is OPTIONAL
+          if [ -d frontend/public ]; then
+            echo "frontend/public exists"
+          else
+            echo "WARNING: frontend/public does not exist (this is OK)"
+          fi
+      
       - name: Debug frontend build output
         if: ${{ env.DEBUG_CI == '1' }}
         run: |
