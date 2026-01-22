@@ -16,7 +16,7 @@ on:
         type: boolean
         default: false
       dry_run:
-        description: "Rsync dry run only (skip restart)"
+        description: "Rsync dry-run only (skip restart)"
         type: boolean
         default: false
 
@@ -32,9 +32,9 @@ env:
   DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
 
 jobs:
-  # ---------------------------
-  # BACKEND BUILD (CI CHECK)
-  # ---------------------------
+  # =====================================================
+  # BACKEND BUILD (CI CHECK ONLY)
+  # =====================================================
   backend_build:
     runs-on: ubuntu-latest
     steps:
@@ -43,25 +43,12 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Sanity: verify backend paths
+      - name: Sanity check backend path
         run: |
           test -d backend && test -f backend/requirements.txt || {
-            echo "Missing backend/requirements.txt"
+            echo "ERROR: backend/requirements.txt missing"
             exit 1
           }
-
-      - name: Debug: workspace
-        if: ${{ env.DEBUG_CI == '1' }}
-        run: |
-          echo "::group::workspace"
-          pwd
-          ls -la
-          echo "::endgroup::"
-
-      - name: Python versions
-        run: |
-          python --version
-          pip --version
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -77,7 +64,6 @@ jobs:
       - name: Django checks
         working-directory: backend
         env:
-          DJANGO_DEBUG: "true"
           DJANGO_SETTINGS_MODULE: core.settings
           DJANGO_SECRET_KEY: "ci-placeholder"
           APPLICANT_SECRET: "ci-placeholder"
@@ -85,9 +71,9 @@ jobs:
           DB_NAME: ":memory:"
         run: python manage.py check
 
-  # ---------------------------
-  # FRONTEND BUILD (CI ARTIFACT)
-  # ---------------------------
+  # =====================================================
+  # FRONTEND BUILD (ARTIFACT)
+  # =====================================================
   frontend_build:
     runs-on: ubuntu-latest
     steps:
@@ -96,25 +82,12 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Sanity: verify frontend paths
+      - name: Sanity check frontend path
         run: |
           test -d frontend && test -f frontend/package.json || {
-            echo "Missing frontend/package.json"
+            echo "ERROR: frontend/package.json missing"
             exit 1
           }
-
-      - name: Debug: workspace
-        if: ${{ env.DEBUG_CI == '1' }}
-        run: |
-          echo "::group::workspace"
-          pwd
-          ls -la
-          echo "::endgroup::"
-
-      - name: Node versions
-        run: |
-          node -v
-          npm -v
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -125,17 +98,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: frontend
-        run: |
-          retry() {
-            n=0
-            until [ $n -ge 3 ]; do
-              "$@" && return 0
-              n=$((n+1))
-              sleep $((n*5))
-            done
-            return 1
-          }
-          retry npm ci --prefer-offline --no-audit
+        run: npm ci --prefer-offline --no-audit
 
       - name: Build frontend
         working-directory: frontend
@@ -143,33 +106,28 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: ${{ secrets.BACKEND_HEALTH_URL }}
         run: npm run build
 
-      - name: Verify frontend build outputs
+      - name: Verify frontend build output
         run: |
           test -d frontend/.next || {
-            echo "Missing frontend/.next"
+            echo "ERROR: frontend/.next missing"
             exit 1
           }
           test -d frontend/public || {
-            echo "Missing frontend/public"
+            echo "ERROR: frontend/public missing"
             exit 1
           }
 
-      - name: List frontend build output
+      - name: Debug frontend build output
         if: ${{ env.DEBUG_CI == '1' }}
         run: |
-          echo "::group::frontend build output"
+          echo "=== FRONTEND BUILD OUTPUT ==="
+          pwd
           ls -la frontend
-          if [ -d frontend/.next ]; then
-            ls -la frontend/.next
-            du -sh frontend/.next || true
-          fi
-          if [ -d frontend/public ]; then
-            ls -la frontend/public
-            du -sh frontend/public || true
-          fi
-          echo "::endgroup::"
+          ls -la frontend/.next || true
+          ls -la frontend/public || true
+          echo "=== END FRONTEND BUILD OUTPUT ==="
 
-      - name: Upload frontend build
+      - name: Upload frontend artifacts
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
@@ -178,9 +136,9 @@ jobs:
             frontend/.next
             frontend/public
 
-  # ---------------------------
+  # =====================================================
   # DEPLOY TO SERVER
-  # ---------------------------
+  # =====================================================
   deploy:
     runs-on: ubuntu-latest
     needs: [backend_build, frontend_build]
@@ -196,18 +154,18 @@ jobs:
           name: frontend-build
           path: frontend
 
-      - name: Verify frontend artifact
+      - name: Verify downloaded frontend artifact
         run: |
           test -d frontend/.next || {
-            echo "Missing frontend/.next in downloaded artifact"
+            echo "ERROR: frontend/.next missing after download"
             exit 1
           }
           test -d frontend/public || {
-            echo "Missing frontend/public in downloaded artifact"
+            echo "ERROR: frontend/public missing after download"
             exit 1
           }
 
-      - name: Sanity: verify deploy secrets present
+      - name: Sanity check deploy secrets
         run: |
           test -n "${{ secrets.DEPLOY_HOST }}" || { echo "DEPLOY_HOST missing"; exit 1; }
           test -n "${{ secrets.DEPLOY_USER }}" || { echo "DEPLOY_USER missing"; exit 1; }
@@ -221,72 +179,30 @@ jobs:
 
       - name: Add deploy host to known_hosts
         run: |
-          retry() {
-            n=0
-            until [ $n -ge 3 ]; do
-              "$@" && return 0
-              n=$((n+1))
-              sleep $((n*5))
-            done
-            return 1
-          }
           mkdir -p ~/.ssh
-          retry ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
 
-      # ---- BACKEND server
       - name: Deploy backend
         run: |
-          retry() {
-            n=0
-            until [ $n -ge 3 ]; do
-              "$@" && return 0
-              n=$((n+1))
-              sleep $((n*5))
-            done
-            return 1
-          }
-          DRY_RUN_FLAG=""
-          if [ "${DRY_RUN}" = "1" ]; then
-            DRY_RUN_FLAG="--dry-run"
-          fi
-          retry rsync -az --delete ${DRY_RUN_FLAG} \
+          DRY=""
+          [ "${DRY_RUN}" = "1" ] && DRY="--dry-run"
+          rsync -az --delete $DRY \
             --exclude ".env" \
             --exclude ".git" \
             backend/ \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/backend/"
 
-      # ---- FRONTEND server
       - name: Deploy frontend
         run: |
-          retry() {
-            n=0
-            until [ $n -ge 3 ]; do
-              "$@" && return 0
-              n=$((n+1))
-              sleep $((n*5))
-            done
-            return 1
-          }
-          DRY_RUN_FLAG=""
-          if [ "${DRY_RUN}" = "1" ]; then
-            DRY_RUN_FLAG="--dry-run"
-          fi
-          retry rsync -az --delete ${DRY_RUN_FLAG} frontend/.next/ \
+          DRY=""
+          [ "${DRY_RUN}" = "1" ] && DRY="--dry-run"
+          rsync -az --delete $DRY frontend/.next/ \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/frontend/.next/"
-          retry rsync -az --delete ${DRY_RUN_FLAG} frontend/public/ \
+          rsync -az --delete $DRY frontend/public/ \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/frontend/public/"
 
-      - name: Restart frontend safely
+      - name: Restart frontend & nginx
         if: ${{ env.DRY_RUN != '1' }}
         run: |
-          retry() {
-            n=0
-            until [ $n -ge 3 ]; do
-              "$@" && return 0
-              n=$((n+1))
-              sleep $((n*5))
-            done
-            return 1
-          }
-          retry ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
           "cd '${{ secrets.DEPLOY_PATH }}' && docker compose -f docker-compose.prod.yml restart frontend nginx"
