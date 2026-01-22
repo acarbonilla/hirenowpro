@@ -73,14 +73,19 @@ jobs:
           NEXT_PUBLIC_API_BASE_URL: ${{ secrets.BACKEND_HEALTH_URL }}
         run: npm run build
 
+      - name: List frontend build output
+        run: |
+          ls -la frontend
+          ls -la frontend/.next
+
       - name: Upload frontend build
         uses: actions/upload-artifact@v4
         with:
           name: frontend-build
           if-no-files-found: error
           path: |
-            .next
-            public
+            frontend/.next
+            frontend/public
 
   # ---------------------------
   # DEPLOY TO SERVER
