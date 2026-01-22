@@ -34,8 +34,10 @@ jobs:
       - name: Django checks
         working-directory: backend
         env:
+          DJANGO_DEBUG: "true"
           DJANGO_SETTINGS_MODULE: core.settings
           DJANGO_SECRET_KEY: "ci-placeholder"
+          APPLICANT_SECRET: "ci-placeholder"
           DB_ENGINE: "django.db.backends.sqlite3"
           DB_NAME: ":memory:"
         run: python manage.py check
