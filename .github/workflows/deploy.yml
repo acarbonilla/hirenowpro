@@ -220,13 +220,15 @@ jobs:
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/backend/"
 
       - name: Deploy frontend
+        working-directory: frontend
         run: |
           DRY=""
           [ "${DRY_RUN}" = "1" ] && DRY="--dry-run"
-          rsync -az --delete $DRY frontend/.next/ \
+          [ -d .next ] || exit 1
+          rsync -az --delete $DRY .next/ \
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/frontend/.next/"
-          if [ -d frontend/public ]; then
-            rsync -az --delete $DRY frontend/public/ \
+          if [ -d public ]; then
+            rsync -az --delete $DRY public/ \
               "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/frontend/public/"
           fi
 
