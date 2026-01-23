@@ -145,7 +145,8 @@ jobs:
         with:
           name: frontend-next
           if-no-files-found: error
-          path: frontend/.next
+          path: .next
+
 
       - name: Upload frontend public (optional)
         if: ${{ hashFiles('frontend/public/**') != '' }}
