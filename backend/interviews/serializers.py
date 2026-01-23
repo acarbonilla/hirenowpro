@@ -629,6 +629,10 @@ class ProcessingStatusResponseSerializer(serializers.Serializer):
 class InterviewListSerializer(serializers.ModelSerializer):
     applicant_name = serializers.CharField(source="applicant.full_name", read_only=True)
     applicant_full_name = serializers.SerializerMethodField()
+    applicant_email = serializers.EmailField(source="applicant.email", read_only=True)
+    applicant_phone = serializers.CharField(source="applicant.phone", read_only=True)
+    applicant_created_at = serializers.DateTimeField(source="applicant.created_at", read_only=True)
+    applicant_position_applied = serializers.SerializerMethodField()
     position = serializers.SerializerMethodField()
     is_archived = serializers.BooleanField(source="archived", read_only=True)
 
@@ -646,6 +650,10 @@ class InterviewListSerializer(serializers.ModelSerializer):
             "position_type",
             "applicant_name",
             "applicant_full_name",
+            "applicant_email",
+            "applicant_phone",
+            "applicant_created_at",
+            "applicant_position_applied",
             "position",
         ]
 
@@ -663,5 +671,14 @@ class InterviewListSerializer(serializers.ModelSerializer):
         last = getattr(applicant, "last_name", "") or ""
         full = f"{first} {last}".strip()
         return full if full else getattr(applicant, "full_name", None)
+
+    def get_applicant_position_applied(self, obj):
+        applicant = getattr(obj, "applicant", None)
+        if applicant is not None:
+            position_name = getattr(applicant, "latest_position_name", None)
+            if position_name:
+                return position_name
+        position_type = getattr(obj, "position_type", None)
+        return getattr(position_type, "name", None)
     
     
