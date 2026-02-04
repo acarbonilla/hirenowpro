@@ -1,4 +1,5 @@
 from django.db import models
+import uuid
 from django.conf import settings
 from applicants.models import Applicant, OfficeLocation
 from .type_models import PositionType, QuestionType
@@ -110,6 +111,13 @@ class Interview(models.Model):
     
     applicant = models.ForeignKey(Applicant, on_delete=models.CASCADE, related_name='interviews')
     interview_type = models.CharField(max_length=20, choices=INTERVIEW_TYPE_CHOICES, default='initial_ai')
+    public_id = models.UUIDField(
+        default=uuid.uuid4,
+        unique=True,
+        db_index=True,
+        editable=False,
+        help_text="Public, non-guessable identifier for interview access",
+    )
     position_type = models.ForeignKey(
         PositionType,
         on_delete=models.PROTECT,

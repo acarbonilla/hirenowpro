@@ -3,9 +3,9 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Webcam from "react-webcam";
-import { interviewAPI, api } from "@/lib/api";
-import { api as apiClient } from "@/lib/apiClient";
-import { getApplicantToken } from "@/app/utils/auth-applicant";
+import { interviewAPI } from "@/lib/api";
+import { publicApi } from "@/lib/apiClient";
+import { getInterviewAccessToken } from "@/lib/interviewAccess";
 import { useStore } from "@/store/useStore";
 import { ttsService, TTS_PROVIDER } from "@/lib/ttsService";
 import {
@@ -82,9 +82,9 @@ export default function InterviewPage() {
   // ─────────────────────
   const params = useParams();
   const router = useRouter();
-  const interviewId = parseInt(params.id as string);
-  const resumeStorageKey = `resumeInterview:${interviewId}`;
-  const integrityConsentStorageKey = `integrityConsent:${interviewId}`;
+  const publicId = params.id as string;
+  const resumeStorageKey = `resumeInterview:${publicId}`;
+  const integrityConsentStorageKey = `integrityConsent:${publicId}`;
 
   const webcamRef = useRef<Webcam>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -226,7 +226,7 @@ export default function InterviewPage() {
 
   const persistIntegrity = useCallback(
     async (mode: "checkpoint" | "submit" | "unload" = "checkpoint") => {
-      if (!integrityActiveRef.current || !interviewId) return;
+      if (!integrityActiveRef.current || !publicId) return;
       const payload = buildIntegrityPayload();
       const comparablePayload = { ...payload, captured_at: undefined };
       if (
@@ -238,11 +238,21 @@ export default function InterviewPage() {
       lastSentIntegrityRef.current = payload;
 
       const requestBody = { integrity: payload };
-      if (mode === "unload" && typeof navigator !== "undefined" && navigator.sendBeacon) {
+      const token = getInterviewAccessToken();
+      if (!token) return;
+
+      if (mode === "unload" && typeof window !== "undefined") {
         try {
-          const url = apiClient.getUri({ url: `/public/interviews/${interviewId}/integrity/` });
-          const blob = new Blob([JSON.stringify(requestBody)], { type: "application/json" });
-          navigator.sendBeacon(url, blob);
+          const url = publicApi.getUri({ url: `/interviews/${publicId}/integrity/` });
+          await fetch(url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify(requestBody),
+            keepalive: true,
+          });
           return;
         } catch {
           // Fall through to async call.
@@ -250,12 +260,12 @@ export default function InterviewPage() {
       }
 
       try {
-        await apiClient.post(`/public/interviews/${interviewId}/integrity/`, requestBody);
+        await publicApi.post(`/interviews/${publicId}/integrity/`, requestBody);
       } catch (err) {
         console.warn("Integrity logging failed", err);
       }
     },
-    [interviewId]
+    [publicId]
   );
 
   const handleIntegrityAcknowledge = () => {
@@ -333,18 +343,14 @@ export default function InterviewPage() {
   // ─────────────────────
   // Load interview and questions
   useEffect(() => {
-    if (!interviewId) return;
+    if (!publicId) return;
 
     const fetchInterview = async () => {
       setIsLoading(true);
       setError("");
 
       try {
-        const applicantToken = getApplicantToken();
-        const config = applicantToken
-          ? { headers: { Authorization: `Bearer ${applicantToken}` } }
-          : undefined;
-        const response = await interviewAPI.getInterview(interviewId, config);
+        const response = await interviewAPI.getInterview(publicId);
         const data = response.data;
         const interview = data?.interview ?? data;
 
@@ -358,8 +364,8 @@ export default function InterviewPage() {
           return;
         }
 
-        if (process.env.NODE_ENV !== "production" && interview.id && interview.id !== interviewId) {
-          console.error("Interview ID mismatch", { routeId: interviewId, payloadId: interview.id });
+        if (process.env.NODE_ENV !== "production" && interview.public_id && interview.public_id !== publicId) {
+          console.error("Interview ID mismatch", { routeId: publicId, payloadId: interview.public_id });
         }
 
         setInterview(interview);
@@ -398,7 +404,7 @@ export default function InterviewPage() {
         }
       } catch (err: any) {
         if (err?.response?.status === 404) {
-          console.warn("Interview not found (404):", interviewId);
+          console.warn("Interview not found (404):", publicId);
           setError("Interview not found or no longer available.");
           // Clear stale state from store
           setInterview(null);
@@ -414,7 +420,7 @@ export default function InterviewPage() {
     };
 
     fetchInterview();
-  }, [interviewId]);
+  }, [publicId]);
 
   useEffect(() => {
     if (integrityAcknowledged && questions.length > 0 && showInitialCountdown) {
@@ -916,7 +922,7 @@ export default function InterviewPage() {
       if (TTS_PROVIDER !== "deepgram") {
         throw new Error("TTS provider must be deepgram");
       }
-      if (!interviewId || Number.isNaN(interviewId)) {
+      if (!publicId) {
         setError("Audio unavailable.");
         handlers?.onError?.();
         return false;
@@ -924,7 +930,7 @@ export default function InterviewPage() {
 
       void ttsService
         .speak({
-          interviewId,
+          interviewId: publicId,
           text,
           cacheKey,
           onStart: () => setIsSpeaking(true),
@@ -947,7 +953,7 @@ export default function InterviewPage() {
 
       return true;
     },
-    [interviewId]
+    [publicId]
   );
 
   // Text-to-speech function
@@ -1164,7 +1170,7 @@ export default function InterviewPage() {
       formData.append("time_limit_reached", timeLimitReached ? "true" : "false");
 
       console.log("Uploading video response:");
-      console.log("- Interview ID:", interviewId);
+      console.log("- Interview ID:", publicId);
       console.log("- Current Question:", currentQuestion);
       console.log("- Question ID:", currentQuestion.id);
       console.log("- Recording Time (seconds):", recordingTime);
@@ -1176,7 +1182,7 @@ export default function InterviewPage() {
       }
 
       // Upload video (this includes AI processing on backend, takes 30-60 seconds)
-      const uploadResponse = await interviewAPI.uploadVideoResponse(interviewId, formData);
+      const uploadResponse = await interviewAPI.uploadVideoResponse(publicId, formData);
 
       console.log("Video uploaded successfully!", uploadResponse?.data);
 
@@ -1269,22 +1275,18 @@ export default function InterviewPage() {
     setError("");
 
     try {
-      const applicantToken = getApplicantToken();
-      if (!applicantToken) {
-        setError("Unable to submit interview: missing applicant session. Please reopen your interview link.");
+      const interviewToken = getInterviewAccessToken();
+      if (!interviewToken) {
+        setError("Unable to submit interview: missing interview token. Please reopen your interview link.");
         setIsSubmitting(false);
         return;
       }
 
-      console.log("Submitting interview:", interviewId);
+      console.log("Submitting interview:", publicId);
       console.log("Questions answered:", answeredCount, "of", questions.length);
 
         const integrityPayload = buildIntegrityPayload();
-        await api.post(
-          `/public/interviews/${interviewId}/submit/`,
-          { integrity: integrityPayload },
-          { headers: { Authorization: `Bearer ${applicantToken}` } }
-        );
+        await publicApi.post(`/interviews/${publicId}/submit/`, { integrity: integrityPayload });
 
         console.log("Interview submitted successfully! Redirecting to completion page...");
         if (typeof window !== "undefined") {
@@ -1293,7 +1295,7 @@ export default function InterviewPage() {
         }
       // Redirect to a friendly completion screen; user can then choose
       // to view processing status or return to dashboard.
-      router.push(`/interview-complete?id=${interviewId}`);
+      router.push(`/interview-complete?id=${publicId}`);
     } catch (err: any) {
       console.error("Submit error:", err);
       console.error("Error response:", err.response?.data);
@@ -1328,7 +1330,7 @@ export default function InterviewPage() {
     );
   }
 
-  if (!interview || !interview.id) {
+  if (!interview) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-center max-w-md">

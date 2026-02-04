@@ -137,6 +137,7 @@ export default function HRDashboardLayout({ children }: { children: React.ReactN
     { type: "link", name: "Interview Records", href: "/hr-dashboard/history", icon: "REC" },
     { type: "link", name: "Applicants", href: "/hr-dashboard/applicants", icon: "APP" },
     { type: "link", name: "Positions", href: "/hr-dashboard/positions", icon: "POS" },
+    { type: "link", name: "Rankings", href: "/hr-dashboard/rankings", icon: "RKG" },
     { type: "link", name: "Analytics", href: "/hr-dashboard/analytics", icon: "AN" },
   ];
 

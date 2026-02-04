@@ -282,8 +282,6 @@ def traffic_monitor(request):
 def healthcheck(request):
     db_ok = True
     redis_ok = True
-    db_error = ""
-    redis_error = ""
 
     try:
         with connections["default"].cursor() as cursor:
@@ -291,26 +289,21 @@ def healthcheck(request):
             cursor.fetchone()
     except Exception as exc:
         db_ok = False
-        db_error = str(exc)
+        _ = exc
 
     try:
         cache_key = "healthcheck"
         cache.set(cache_key, "ok", timeout=5)
         redis_ok = cache.get(cache_key) == "ok"
         if not redis_ok:
-            redis_error = "cache read/write mismatch"
+            pass
     except Exception as exc:
         redis_ok = False
-        redis_error = str(exc)
+        _ = exc
 
     status_code = status.HTTP_200_OK if db_ok and redis_ok else status.HTTP_503_SERVICE_UNAVAILABLE
     payload = {
         "status": "ok" if status_code == status.HTTP_200_OK else "degraded",
-        "db": "ok" if db_ok else "error",
-        "redis": "ok" if redis_ok else "error",
-        "db_error": db_error,
-        "redis_error": redis_error,
-        "timestamp": timezone.now().isoformat(),
     }
     return Response(payload, status=status_code)
 

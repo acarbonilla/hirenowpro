@@ -6,6 +6,7 @@ from accounts.permissions import IsApplicant
 from common.throttles import RegistrationBurstThrottle, RegistrationHourlyThrottle, RegistrationDailyThrottle
 from common.permissions import IsHRUser
 from accounts.authentication import generate_applicant_token, ApplicantTokenAuthentication
+from security.interview_tokens import generate_interview_token
 from django.conf import settings
 from django.db.models import Q, OuterRef, Subquery, Exists, Value, Case, When, BooleanField
 from django.db.models.functions import Coalesce
@@ -224,8 +225,9 @@ class ApplicantViewSet(viewsets.ModelViewSet):
                             "resume": True,
                             "applicant": response_serializer.data,
                             "token": token,
-                            "interview_id": interview.id,
-                            "redirect_url": f"/interview/{interview.id}",
+                            "public_id": str(interview.public_id),
+                            "interview_token": generate_interview_token(interview.public_id),
+                            "redirect_url": f"/interview/{interview.public_id}",
                         },
                         status=status.HTTP_200_OK,
                     )

@@ -21,6 +21,7 @@ from accounts.authentication import (
 from accounts.permissions import RolePermission
 from applicants.models import Applicant
 from interviews.models import Interview, InterviewAuditLog
+from security.interview_tokens import generate_interview_token
 
 try:
     import qrcode
@@ -180,8 +181,9 @@ class MagicLoginView(APIView):
                 "valid": True,
                 "applicant_id": applicant_id,
                 "token": token,
-                "interview_id": interview.id,
-                "redirect_url": f"/interview/{interview.id}/",
+                "public_id": str(interview.public_id),
+                "interview_token": generate_interview_token(interview.public_id),
+                "redirect_url": f"/interview/{interview.public_id}/",
             },
             status=status.HTTP_200_OK,
         )

@@ -180,6 +180,10 @@ REST_FRAMEWORK = {
         'login_user': '5/min',
         'anon': '50/min',
         'user': '100/min',
+        'public_interview_retrieve': '30/min',
+        'public_interview_upload': '5/min',
+        'public_interview_submit': '3/min',
+        'public_interview_tts': '5/min',
     },
 }
 
@@ -336,6 +340,7 @@ if not APPLICANT_SECRET and DEBUG:
 if not APPLICANT_SECRET and not DEBUG:
     raise RuntimeError("APPLICANT_SECRET must be set in production")
 APPLICANT_TOKEN_EXPIRY_HOURS = int(os.getenv("APPLICANT_TOKEN_EXPIRY_HOURS", "12"))
+INTERVIEW_TOKEN_EXPIRY_HOURS = int(os.getenv("INTERVIEW_TOKEN_EXPIRY_HOURS", "48"))
 
 # Debug flags
 LOG_HR_AUTH = False

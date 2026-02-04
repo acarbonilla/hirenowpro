@@ -58,3 +58,19 @@ class LoginUserRateThrottle(SimpleRateThrottle):
             "scope": self.scope,
             "ident": ident,
         }
+
+
+class PublicInterviewRetrieveThrottle(AnonRateThrottle):
+    scope = "public_interview_retrieve"
+
+
+class PublicInterviewUploadThrottle(AnonRateThrottle):
+    scope = "public_interview_upload"
+
+
+class PublicInterviewSubmitThrottle(AnonRateThrottle):
+    scope = "public_interview_submit"
+
+
+class PublicInterviewTtsThrottle(AnonRateThrottle):
+    scope = "public_interview_tts"

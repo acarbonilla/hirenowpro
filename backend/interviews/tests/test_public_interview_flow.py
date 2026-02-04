@@ -6,6 +6,7 @@ from rest_framework.test import APITestCase
 from applicants.models import Applicant
 from interviews.models import Interview, InterviewQuestion
 from interviews.type_models import PositionType
+from security.interview_tokens import generate_interview_token
 
 
 class PublicInterviewFlowTests(APITestCase):
@@ -21,18 +22,29 @@ class PublicInterviewFlowTests(APITestCase):
             phone="1234567890",
         )
 
-    def test_public_interview_creation_creates_db_record(self):
+    def test_public_interview_resume_requires_token(self):
+        interview = Interview.objects.create(
+            applicant=self.applicant,
+            position_type=self.position_type,
+            interview_type="initial_ai",
+            status="pending",
+        )
         url = "/api/public/interviews/"
         payload = {
-            "applicant_id": self.applicant.id,
-            "position_code": self.position_type.code,
-            "interview_type": "initial_ai",
+            "public_id": str(interview.public_id),
         }
         response = self.client.post(url, payload, format="json")
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        interview_id = response.data.get("id") or response.data.get("interview", {}).get("id")
-        self.assertIsNotNone(interview_id)
-        self.assertTrue(Interview.objects.filter(id=interview_id).exists())
+        self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+
+        token = generate_interview_token(interview.public_id)
+        response = self.client.post(
+            url,
+            payload,
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(str(interview.public_id), response.data.get("public_id"))
 
     def test_public_interview_retrieve_returns_200(self):
         interview = Interview.objects.create(
@@ -41,8 +53,9 @@ class PublicInterviewFlowTests(APITestCase):
             interview_type="initial_ai",
             status="pending",
         )
-        url = f"/api/public/interviews/{interview.id}/"
-        response = self.client.get(url)
+        url = f"/api/public/interviews/{interview.public_id}/"
+        token = generate_interview_token(interview.public_id)
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertIn("questions", response.data)
 
@@ -61,18 +74,25 @@ class PublicInterviewFlowTests(APITestCase):
             position_type=self.position_type,
             question_type=self.qtype_general,
         )
-        upload_url = f"/api/public/interviews/{interview.id}/video-response/"
+        upload_url = f"/api/public/interviews/{interview.public_id}/video-response/"
         video_file = SimpleUploadedFile("answer.webm", b"dummy-content", content_type="video/webm")
         payload = {
             "question_id": question.id,
             "video_file_path": video_file,
             "duration": "00:00:05",
         }
-        response = self.client.post(upload_url, payload, format="multipart")
-        self.assertNotIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_404_NOT_FOUND])
+        token = generate_interview_token(interview.public_id)
+        response = self.client.post(
+            upload_url,
+            payload,
+            format="multipart",
+            HTTP_AUTHORIZATION=f"Bearer {token}",
+        )
         self.assertIn(response.status_code, [status.HTTP_200_OK, status.HTTP_201_CREATED])
 
     def test_invalid_interview_id_returns_404(self):
-        url = "/api/public/interviews/999999/"
-        response = self.client.get(url)
+        fake_public_id = "00000000-0000-0000-0000-000000000000"
+        url = f"/api/public/interviews/{fake_public_id}/"
+        token = generate_interview_token(fake_public_id)
+        response = self.client.get(url, HTTP_AUTHORIZATION=f"Bearer {token}")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

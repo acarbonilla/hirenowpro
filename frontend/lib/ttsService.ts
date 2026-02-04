@@ -11,7 +11,7 @@ type SpeakHandlers = {
 };
 
 type SpeakOptions = SpeakHandlers & {
-  interviewId: number;
+  interviewId: string;
   text: string;
   cacheKey?: string;
 };
@@ -41,7 +41,7 @@ const buildCacheKey = (text: string, cacheKey?: string) => {
   return `${VOICE_ID}|${LANGUAGE}|${text}`;
 };
 
-const fetchAudio = async (interviewId: number, text: string, cacheKey?: string) => {
+const fetchAudio = async (interviewId: string, text: string, cacheKey?: string) => {
   const key = buildCacheKey(text, cacheKey);
   const cached = audioCache.get(key);
   if (cached) return cached;

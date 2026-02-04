@@ -32,6 +32,7 @@ from .serializers import (
     PublicJobPositionSerializer,
     HRDecisionSerializer,
     DecisionEmailSerializer,
+    PositionRankingSerializer,
 )
 from .type_serializers import JobCategorySerializer, QuestionTypeSerializer
 from .type_serializers import JobCategorySerializer as PositionTypeSerializer
@@ -39,6 +40,7 @@ from .question_selection import select_questions_for_interview, select_questions
 from .services import enqueue_interview_processing, build_processing_status_payload
 from .tasks import process_complete_interview, transcribe_video_response
 from notifications.tasks import send_applicant_email_task
+from results.models import InterviewResult
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +155,76 @@ class JobPositionViewSet(viewsets.ModelViewSet):
             updated_count = JobPosition.objects.filter(id__in=id_set).update(is_active=is_active)
 
         return Response({"updated": updated_count}, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="rankings",
+        permission_classes=[IsAuthenticated, IsHRUser],
+        authentication_classes=[HRTokenAuthentication, *api_settings.DEFAULT_AUTHENTICATION_CLASSES],
+    )
+    def rankings(self, request, pk=None):
+        position = self.get_object()
+        position_type = getattr(position, "category", None) or getattr(position, "job_category", None)
+        if position_type is None:
+            return Response(
+                {"detail": "Position category is not configured."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        results_qs = (
+            InterviewResult.objects.select_related("applicant", "interview", "interview__position_type")
+            .filter(interview__position_type=position_type)
+            .order_by(
+                "-final_score",
+                "-result_date",
+                "applicant__last_name",
+                "applicant__first_name",
+                "id",
+            )
+        )
+
+        rankings = []
+        for result in results_qs:
+            interview = getattr(result, "interview", None)
+            applicant = getattr(result, "applicant", None)
+            hr_decision = (getattr(interview, "hr_decision", None) or "").lower()
+            interview_status = (getattr(interview, "status", "") or "").lower()
+
+            if hr_decision == "hold":
+                status_label = "ON_HOLD"
+            elif getattr(result, "passed", False) is True:
+                status_label = "PASSED"
+            elif interview_status == "failed" or getattr(result, "final_decision", "") == "rejected":
+                status_label = "FAILED"
+            elif interview_status == "completed":
+                status_label = "COMPLETED"
+            else:
+                status_label = interview_status.upper() if interview_status else "UNKNOWN"
+
+            retake_status = "ARCHIVED" if getattr(interview, "archived", False) else "RETAKE" if getattr(interview, "is_retake", False) else "INITIAL"
+
+            rankings.append(
+                {
+                    "applicant_id": getattr(applicant, "id", None),
+                    "applicant_name": getattr(applicant, "full_name", None),
+                    "position_id": position.id,
+                    "interview_score": getattr(result, "final_score", None),
+                    "interview_status": status_label,
+                    "attempt_count": getattr(interview, "attempt_number", None),
+                    "retake_status": retake_status,
+                    "application_date": getattr(applicant, "application_date", None),
+                }
+            )
+
+        serializer = PositionRankingSerializer(rankings, many=True)
+        return Response(
+            {
+                "position_id": position.id,
+                "position_name": position.name,
+                "rankings": serializer.data,
+            }
+        )
 
 
 class QuestionTypeViewSet(viewsets.ModelViewSet):

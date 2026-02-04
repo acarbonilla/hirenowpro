@@ -70,7 +70,8 @@ export interface AIAnalysis {
 }
 
 export interface Interview {
-  id: number;
+  id?: number;
+  public_id?: string;
   applicant: Applicant;
   interview_type: "initial_ai" | "technical" | "final";
   status: "pending" | "in_progress" | "submitted" | "processing" | "completed" | "failed";

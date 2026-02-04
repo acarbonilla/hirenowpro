@@ -8,7 +8,7 @@ import { Loader2, CheckCircle, Clock, AlertCircle } from "lucide-react";
 export default function ProcessingPage() {
   const router = useRouter();
   const params = useParams();
-  const interviewId = params.id as string;
+  const publicId = params.id as string;
 
   const [status, setStatus] = useState<"processing" | "completed" | "failed">("processing");
   const [elapsedTime, setElapsedTime] = useState(0);
@@ -30,7 +30,7 @@ export default function ProcessingPage() {
     // Check processing status every 10 seconds
     const checkStatus = async () => {
       try {
-        const response = await interviewAPI.getInterview(parseInt(interviewId));
+        const response = await interviewAPI.getInterview(publicId);
         const interview = response.data.interview || response.data;
 
         console.log("Interview status:", interview.status);
@@ -42,7 +42,7 @@ export default function ProcessingPage() {
 
           // Redirect to results after 2 seconds
           setTimeout(() => {
-            router.push(`/results/${interviewId}`);
+            router.push(`/results/${publicId}`);
           }, 2000);
 
           clearInterval(statusCheckInterval);
@@ -67,7 +67,7 @@ export default function ProcessingPage() {
       if (interval) clearInterval(interval);
       if (statusCheckInterval) clearInterval(statusCheckInterval);
     };
-  }, [interviewId, router]);
+  }, [publicId, router]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);

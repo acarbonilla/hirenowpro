@@ -24,6 +24,8 @@ class PublicApplicantSerializer(serializers.ModelSerializer):
 
 
 class PublicInterviewSerializer(serializers.ModelSerializer):
+    public_id = serializers.UUIDField(read_only=True)
+    applicant = PublicApplicantSerializer(read_only=True)
     questions = serializers.SerializerMethodField()
     category_detail = JobCategorySerializer(source="position_type", read_only=True)
     position_type = serializers.SerializerMethodField()
@@ -32,7 +34,8 @@ class PublicInterviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = Interview
         fields = [
-            "id",
+            "public_id",
+            "applicant",
             "interview_type",
             "position_type",
             "category_detail",

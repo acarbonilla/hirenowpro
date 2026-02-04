@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { api } from "@/lib/apiClient";
+import { setInterviewAccessToken } from "@/lib/interviewAccess";
 
 export default function InterviewMagicLoginPage() {
   const params = useParams();
@@ -20,18 +21,21 @@ export default function InterviewMagicLoginPage() {
         const res = await api.get(`/applicant/magic-login/${token}/`, {
           validateStatus: () => true,
         });
-        if (res.status === 200 && res.data?.valid && res.data?.token) {
-          localStorage.setItem("applicantToken", res.data.token);
+        if (res.status === 200 && res.data?.valid) {
           setStatus("success");
           setMessage("Login successful. Redirecting...");
-          const interviewId = res.data.interview_id || res.data.id;
-          if (!interviewId && !res.data.redirect_url) {
+          const interviewToken = res.data.interview_token;
+          const interviewPublicId = res.data.public_id || res.data.interview_id || res.data.id;
+          if (!interviewToken || !interviewPublicId) {
             setStatus("error");
             setMessage("Invalid or unavailable interview link.");
             setResolved(true);
             return;
           }
-          const redirectUrl = res.data.redirect_url || `/interview/${interviewId}`;
+          setInterviewAccessToken(interviewToken);
+          const baseRedirect = res.data.redirect_url || `/interview/${interviewPublicId}`;
+          const separator = baseRedirect.includes("?") ? "&" : "?";
+          const redirectUrl = `${baseRedirect}${separator}t=${encodeURIComponent(interviewToken)}`;
           setResolved(true);
           setTimeout(() => router.push(redirectUrl), 800);
         } else if (res.status === 410) {

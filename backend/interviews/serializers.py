@@ -302,6 +302,9 @@ class VideoResponseCreateSerializer(serializers.Serializer):
     question_id = serializers.IntegerField(required=True)
     video_file_path = serializers.FileField(required=True)
     duration = serializers.DurationField(required=True)
+
+    MAX_VIDEO_SIZE_MB = 50
+    ALLOWED_VIDEO_MIME_TYPES = {"video/mp4", "video/webm", "video/quicktime"}
     
     def validate_question_id(self, value):
         """Validate that question exists and is active"""
@@ -309,6 +312,17 @@ class VideoResponseCreateSerializer(serializers.Serializer):
             question = InterviewQuestion.objects.get(id=value, is_active=True)
         except InterviewQuestion.DoesNotExist:
             raise serializers.ValidationError("Invalid or inactive question.")
+        return value
+
+    def validate_video_file_path(self, value):
+        max_bytes = self.MAX_VIDEO_SIZE_MB * 1024 * 1024
+        if hasattr(value, "size") and value.size and value.size > max_bytes:
+            raise serializers.ValidationError("Video file is too large (max 50MB).")
+
+        content_type = getattr(value, "content_type", None)
+        if content_type and content_type not in self.ALLOWED_VIDEO_MIME_TYPES:
+            raise serializers.ValidationError("Unsupported video type. Use mp4, webm, or mov.")
+
         return value
 
 
@@ -579,6 +593,17 @@ class InterviewAnalysisSerializer(serializers.Serializer):
 
 
 # New serializers for bulk processing approach
+
+
+class PositionRankingSerializer(serializers.Serializer):
+    applicant_id = serializers.IntegerField()
+    applicant_name = serializers.CharField()
+    position_id = serializers.IntegerField()
+    interview_score = serializers.FloatField(allow_null=True)
+    interview_status = serializers.CharField()
+    attempt_count = serializers.IntegerField()
+    retake_status = serializers.CharField()
+    application_date = serializers.DateTimeField(allow_null=True)
 
 
 class VideoResponseUploadSerializer(serializers.ModelSerializer):

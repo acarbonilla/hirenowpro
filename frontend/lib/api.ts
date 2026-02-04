@@ -111,11 +111,11 @@ export const interviewAPI = {
     api.post("/interviews/", { ...data, interview_type: data.interview_type || "initial_ai" }),
 
   // Get interview details
-  getInterview: (id: number, config?: RequestConfig) => publicApi.get(`/interviews/${id}/`, config),
+  getInterview: (publicId: string, config?: RequestConfig) => publicApi.get(`/interviews/${publicId}/`, config),
 
   // Upload video response (no immediate analysis)
-  uploadVideoResponse: (interviewId: number, formData: FormData, config?: RequestConfig) => {
-    return publicApi.post(`/interviews/${interviewId}/video-response/`, formData, {
+  uploadVideoResponse: (publicId: string, formData: FormData, config?: RequestConfig) => {
+    return publicApi.post(`/interviews/${publicId}/video-response/`, formData, {
       headers: {
         "Content-Type": "multipart/form-data",
         ...(config?.headers || {}),
@@ -126,7 +126,7 @@ export const interviewAPI = {
   },
 
   // Submit interview for processing
-  submitInterview: (id: number) => api.post(`/interviews/${id}/submit/`),
+  submitInterview: (publicId: string) => publicApi.post(`/interviews/${publicId}/submit/`),
 
   // Complete interview
   completeInterview: (id: number) => api.post(`/interviews/${id}/complete/`),
@@ -143,7 +143,7 @@ export { api };
 
 export const questionAPI = {
   // Get all active questions (with optional position and type filters)
-  getQuestions: (interviewId: number) => publicApi.get(`/interviews/${interviewId}/questions/`),
+  getQuestions: (publicId: string) => publicApi.get(`/interviews/${publicId}/questions/`),
 
   // Get single question
   getQuestion: (id: number) => api.get(`/questions/${id}/`),
