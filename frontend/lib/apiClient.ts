@@ -1,5 +1,5 @@
 import axios from "axios";
-import { getInterviewAccessToken } from "@/lib/interviewAccess";
+import { getInterviewAccessToken, setInterviewAccessToken, setInterviewPublicId } from "@/lib/interviewAccess";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
 
@@ -23,6 +23,24 @@ publicApi.interceptors.request.use((config) => {
     }
   }
   return config;
+});
+
+publicApi.interceptors.response.use((response) => {
+  const data = response?.data;
+  if (data && typeof data === "object") {
+    const token = (data as Record<string, unknown>).interview_token as string | undefined;
+    const publicId =
+      ((data as Record<string, unknown>).public_id as string | undefined) ||
+      ((data as Record<string, any>)?.interview?.public_id as string | undefined);
+
+    if (token) {
+      setInterviewAccessToken(token);
+    }
+    if (publicId) {
+      setInterviewPublicId(publicId);
+    }
+  }
+  return response;
 });
 
 export const createApiClient = (config: Record<string, unknown> = {}) =>

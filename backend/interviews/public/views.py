@@ -7,7 +7,9 @@ import uuid
 from datetime import timedelta
 from django.conf import settings
 from django.http import HttpResponse
+from django.utils.decorators import method_decorator
 from django.utils.dateparse import parse_datetime
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import generics, status, viewsets
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
@@ -20,6 +22,7 @@ from interviews.type_models import PositionType
 from interviews.type_serializers import JobCategorySerializer
 from interviews.serializers import VideoResponseCreateSerializer
 from .serializers import (
+    PublicInterviewCreateSerializer,
     PublicInterviewSerializer,
     PublicJobPositionSerializer,
 )
@@ -31,10 +34,18 @@ from common.throttles import (
     PublicInterviewTtsThrottle,
 )
 from interviews.tasks import process_complete_interview, transcribe_video_response
-from interviews.question_selection import select_questions_for_interview
+from interviews.question_selection import select_questions_for_interview, select_questions_for_interview_with_metadata
 from interviews.services import enqueue_interview_processing, build_processing_status_payload
+from security.interview_tokens import extract_bearer_token, generate_interview_token, verify_interview_token
 
 logger = logging.getLogger(__name__)
+
+
+def _has_valid_interview_token(request, public_id):
+    token = extract_bearer_token(request.headers.get("Authorization"))
+    if not token:
+        return False
+    return verify_interview_token(token, public_id)
 
 
 def _next_question_index(interview, answered_ids):
@@ -118,28 +129,143 @@ def _merge_integrity_metadata(existing, incoming):
     return merged
 
 
+@method_decorator(csrf_exempt, name="dispatch")
 class PublicInterviewCreateView(generics.GenericAPIView):
     """
-    Resume an existing interview using a valid interview token.
-    Interview creation must happen in trusted/internal flows.
+    Create a public interview for an applicant (no public_id required).
+    If public_id is provided without create fields, resume requires a valid interview token in production.
     """
 
-    permission_classes = [InterviewTokenPermission]
+    permission_classes = [AllowAny]
     authentication_classes = []
     throttle_classes = [PublicInterviewRetrieveThrottle]
     serializer_class = PublicInterviewSerializer
 
     def post(self, request, *args, **kwargs):
-        public_id = request.data.get("public_id") or request.query_params.get("public_id")
-        if not public_id:
-            return Response({"detail": "public_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+        request_data = getattr(request, "data", {}) or {}
+        public_id = request_data.get("public_id") or request.query_params.get("public_id")
+        create_fields_present = any(
+            key in request_data
+            for key in (
+                "applicant_id",
+                "applicant",
+                "position_code",
+                "position_type_id",
+                "position_type",
+            )
+        )
 
-        interview = Interview.objects.filter(public_id=public_id, archived=False).first()
-        if not interview:
-            return Response({"detail": "Interview not found."}, status=status.HTTP_404_NOT_FOUND)
+        if public_id and not create_fields_present:
+            token_valid = _has_valid_interview_token(request, public_id)
+            if settings.IS_PROD and not token_valid:
+                return Response({"detail": "Valid interview token required."}, status=status.HTTP_403_FORBIDDEN)
+            if settings.IS_DEV and not token_valid:
+                logger.info("Public interview resume allowed in development without interview token")
+
+            interview = Interview.objects.filter(public_id=public_id, archived=False).first()
+            if not interview:
+                return Response({"detail": "Interview not found."}, status=status.HTTP_404_NOT_FOUND)
+
+            serializer = self.get_serializer(interview)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+
+        payload_serializer = PublicInterviewCreateSerializer(data=request_data)
+        if not payload_serializer.is_valid():
+            return Response(payload_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        applicant = payload_serializer.validated_data["applicant"]
+        position_type = payload_serializer.validated_data["position_type"]
+        interview_type = payload_serializer.validated_data.get("interview_type") or "initial_ai"
+
+        existing_interview = (
+            Interview.objects.filter(applicant=applicant, position_type=position_type)
+            .order_by("-created_at")
+            .first()
+        )
+        if existing_interview:
+            if existing_interview.archived:
+                return Response(
+                    {
+                        "detail": "Interview was archived and requires an HR retake.",
+                        "state": "archived",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if existing_interview.status in {"pending", "in_progress"}:
+                serializer = self.get_serializer(existing_interview)
+                interview_token = generate_interview_token(existing_interview.public_id)
+                return Response(
+                    {
+                        "message": "Resume interview in progress.",
+                        "resume": True,
+                        "public_id": str(existing_interview.public_id),
+                        "id": str(existing_interview.public_id),
+                        "interview_token": interview_token,
+                        "redirect_url": f"/interview/{existing_interview.public_id}",
+                        "interview": serializer.data,
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            if existing_interview.status in {"submitted", "processing", "completed", "failed"}:
+                return Response(
+                    {
+                        "detail": "Interview already submitted.",
+                        "state": "already_submitted",
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+        try:
+            with transaction.atomic():
+                interview = Interview.objects.create(
+                    applicant=applicant,
+                    position_type=position_type,
+                    interview_type=interview_type,
+                    status="pending",
+                )
+
+                if getattr(applicant, "status", None) != "in_review":
+                    applicant.status = "in_review"
+                    try:
+                        applicant.save(update_fields=["status"])
+                    except Exception:
+                        logger.warning(
+                            "Applicant status update failed during public interview creation",
+                            extra={"applicant_id": getattr(applicant, "id", None), "interview_id": interview.id},
+                        )
+
+                from processing.models import ProcessingQueue
+
+                ProcessingQueue.objects.create(
+                    interview=interview,
+                    status="queued",
+                )
+
+                if interview.position_type_id:
+                    selected_questions, selection_metadata = select_questions_for_interview_with_metadata(interview)
+                    interview.selected_question_ids = [q.id for q in selected_questions]
+                    interview.selected_question_metadata = selection_metadata
+                    interview.save(
+                        update_fields=["selected_question_ids", "selected_question_metadata"]
+                    )
+                    if hasattr(interview, "questions"):
+                        interview.questions.set(selected_questions)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         serializer = self.get_serializer(interview)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        interview_token = generate_interview_token(interview.public_id)
+        return Response(
+            {
+                "status": "created",
+                "public_id": str(interview.public_id),
+                "id": str(interview.public_id),
+                "interview_token": interview_token,
+                "redirect_url": f"/interview/{interview.public_id}",
+                "interview": serializer.data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class PublicInterviewViewSet(viewsets.ModelViewSet):
@@ -166,7 +292,7 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
             return [PublicInterviewTtsThrottle()]
         return super().get_throttles()
 
-    def retrieve(self, request, *args, **kwargs):
+    def retrieve(self, request, public_id=None, *args, **kwargs):
         interview = self.get_object()
         if interview.archived:
             return Response({"detail": "Interview has been archived."}, status=status.HTTP_400_BAD_REQUEST)
@@ -205,7 +331,7 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         permission_classes=[InterviewTokenPermission],
         authentication_classes=[],
     )
-    def video_response(self, request, pk=None):
+    def video_response(self, request, public_id=None, pk=None):
         interview = self.get_object()
 
         if interview.status in ["submitted", "processing", "completed"]:
@@ -334,7 +460,7 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         permission_classes=[InterviewTokenPermission],
         authentication_classes=[],
     )
-    def submit(self, request, pk=None):
+    def submit(self, request, public_id=None, pk=None):
         start_time = time.monotonic()
         interview = self.get_object()
         force = str(request.data.get("force", "")).lower() in {"true", "1", "yes"}
@@ -415,7 +541,7 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         permission_classes=[InterviewTokenPermission],
         authentication_classes=[],
     )
-    def processing_status(self, request, pk=None):
+    def processing_status(self, request, public_id=None, pk=None):
         interview = self.get_object()
         payload = build_processing_status_payload(interview)
         return Response(payload, status=status.HTTP_200_OK)
@@ -427,7 +553,7 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         permission_classes=[InterviewTokenPermission],
         authentication_classes=[],
     )
-    def integrity(self, request, pk=None):
+    def integrity(self, request, public_id=None, pk=None):
         interview = self.get_object()
         payload = request.data.get("integrity", request.data)
         if isinstance(payload, str):
@@ -468,7 +594,7 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         permission_classes=[InterviewTokenPermission],
         authentication_classes=[],
     )
-    def tts(self, request, pk=None):
+    def tts(self, request, public_id=None, pk=None):
         text = (request.data.get("text") or "").strip()
         if not text:
             return Response({"detail": "Text is required."}, status=status.HTTP_400_BAD_REQUEST)

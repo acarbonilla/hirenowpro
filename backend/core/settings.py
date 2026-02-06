@@ -15,6 +15,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 DEBUG = os.getenv("DJANGO_DEBUG", "false").lower() == "true"
+ENV = (os.getenv("ENV") or ("development" if DEBUG else "production")).strip().lower()
+IS_PROD = ENV == "production"
+IS_DEV = ENV in ("development", "dev")
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY") or os.getenv("SECRET_KEY")
 if not SECRET_KEY and DEBUG:
     SECRET_KEY = secrets.token_urlsafe(50)
@@ -335,9 +338,9 @@ AUTH_USER_MODEL = 'accounts.User'
 
 # Applicant token settings
 APPLICANT_SECRET = os.getenv("APPLICANT_SECRET")
-if not APPLICANT_SECRET and DEBUG:
+if not APPLICANT_SECRET and not IS_PROD:
     APPLICANT_SECRET = secrets.token_urlsafe(32)
-if not APPLICANT_SECRET and not DEBUG:
+if not APPLICANT_SECRET and IS_PROD:
     raise RuntimeError("APPLICANT_SECRET must be set in production")
 APPLICANT_TOKEN_EXPIRY_HOURS = int(os.getenv("APPLICANT_TOKEN_EXPIRY_HOURS", "12"))
 INTERVIEW_TOKEN_EXPIRY_HOURS = int(os.getenv("INTERVIEW_TOKEN_EXPIRY_HOURS", "48"))

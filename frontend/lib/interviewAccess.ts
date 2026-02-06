@@ -1,4 +1,5 @@
 const STORAGE_KEY = "interview_access_token";
+const PUBLIC_ID_KEY = "interview_public_id";
 
 export function getInterviewAccessToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -28,4 +29,23 @@ export function setInterviewAccessToken(token: string | null) {
 export function clearInterviewAccessToken() {
   if (typeof window === "undefined") return;
   sessionStorage.removeItem(STORAGE_KEY);
+}
+
+export function getInterviewPublicId(): string | null {
+  if (typeof window === "undefined") return null;
+  return sessionStorage.getItem(PUBLIC_ID_KEY);
+}
+
+export function setInterviewPublicId(publicId: string | null) {
+  if (typeof window === "undefined") return;
+  if (publicId) {
+    sessionStorage.setItem(PUBLIC_ID_KEY, publicId);
+  } else {
+    sessionStorage.removeItem(PUBLIC_ID_KEY);
+  }
+}
+
+export function clearInterviewPublicId() {
+  if (typeof window === "undefined") return;
+  sessionStorage.removeItem(PUBLIC_ID_KEY);
 }

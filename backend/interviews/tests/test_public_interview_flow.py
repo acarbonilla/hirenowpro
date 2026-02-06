@@ -1,4 +1,5 @@
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -33,16 +34,44 @@ class PublicInterviewFlowTests(APITestCase):
         payload = {
             "public_id": str(interview.public_id),
         }
-        response = self.client.post(url, payload, format="json")
-        self.assertIn(response.status_code, [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN])
+        with override_settings(IS_PROD=True, IS_DEV=False):
+            response = self.client.post(url, payload, format="json")
+            self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
-        token = generate_interview_token(interview.public_id)
-        response = self.client.post(
-            url,
-            payload,
-            format="json",
-            HTTP_AUTHORIZATION=f"Bearer {token}",
+            token = generate_interview_token(interview.public_id)
+            response = self.client.post(
+                url,
+                payload,
+                format="json",
+                HTTP_AUTHORIZATION=f"Bearer {token}",
+            )
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(str(interview.public_id), response.data.get("public_id"))
+
+    def test_public_interview_create_without_public_id(self):
+        url = "/api/public/interviews/"
+        payload = {
+            "applicant_id": self.applicant.id,
+            "position_code": self.position_type.code,
+            "interview_type": "initial_ai",
+        }
+        response = self.client.post(url, payload, format="json")
+        self.assertIn(response.status_code, [status.HTTP_200_OK, status.HTTP_201_CREATED])
+        self.assertIn("public_id", response.data)
+
+    def test_public_interview_resume_allows_missing_token_in_dev(self):
+        interview = Interview.objects.create(
+            applicant=self.applicant,
+            position_type=self.position_type,
+            interview_type="initial_ai",
+            status="pending",
         )
+        url = "/api/public/interviews/"
+        payload = {
+            "public_id": str(interview.public_id),
+        }
+        with override_settings(IS_PROD=False, IS_DEV=True):
+            response = self.client.post(url, payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(str(interview.public_id), response.data.get("public_id"))
 

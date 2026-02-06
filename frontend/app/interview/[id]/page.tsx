@@ -143,6 +143,7 @@ export default function InterviewPage() {
   const [showFullscreenWarning, setShowFullscreenWarning] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
+  const uploadLockRef = useRef(false);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const audioDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
@@ -1141,6 +1142,10 @@ export default function InterviewPage() {
   }, [isRecording, recordedChunks.length, isUploading, currentQuestionIndex, questions.length, nextQuestion]);
 
   const handleUploadVideo = async () => {
+    if (uploadLockRef.current) {
+      console.warn("Upload already in progress; skipping duplicate call");
+      return;
+    }
     if (recordedChunks.length === 0) {
       setError("No video recorded. Please record your response first.");
       return;
@@ -1152,6 +1157,7 @@ export default function InterviewPage() {
       return;
     }
 
+    uploadLockRef.current = true;
     setIsUploading(true);
     setError("");
 
@@ -1249,6 +1255,7 @@ export default function InterviewPage() {
       }
     } finally {
       setIsUploading(false);
+      uploadLockRef.current = false;
     }
     };
   
