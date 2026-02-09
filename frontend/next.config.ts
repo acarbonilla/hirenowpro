@@ -69,7 +69,8 @@ function guardHrApiPaths() {
 validateProductionApiBase();
 guardHrApiPaths();
 
-const isProdDeploy = process.env.DEPLOYMENT_ENV === "production";
+const isProdDeploy =
+  process.env.DEPLOYMENT_ENV === "production" || process.env.NODE_ENV === "production";
 const wantsStaticExport = process.env.NEXT_OUTPUT === "export";
 
 if (isProdDeploy && wantsStaticExport) {
