@@ -69,8 +69,17 @@ function guardHrApiPaths() {
 validateProductionApiBase();
 guardHrApiPaths();
 
+const isProdDeploy = process.env.DEPLOYMENT_ENV === "production";
+const wantsStaticExport = process.env.NEXT_OUTPUT === "export";
+
+if (isProdDeploy && wantsStaticExport) {
+  throw new Error(
+    "[next-config] Invalid config: NEXT_OUTPUT=export is not allowed in production. SSR is required for runtime interview routes."
+  );
+}
+
 const nextConfig: NextConfig = {
-  /* config options here */
+  ...(!isProdDeploy && wantsStaticExport ? { output: "export" } : {}),
 };
 
 export default nextConfig;
