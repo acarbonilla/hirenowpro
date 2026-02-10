@@ -265,12 +265,12 @@ CACHES = {
 # ============================
 CELERY_BROKER_URL = os.getenv(
     "CELERY_BROKER_URL",
-    f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+    "redis://127.0.0.1:6379/0"
 )
 
 CELERY_RESULT_BACKEND = os.getenv(
     "CELERY_RESULT_BACKEND",
-    f"redis://{REDIS_HOST}:{REDIS_PORT}/0"
+    "redis://127.0.0.1:6379/1"
 )
 
 
