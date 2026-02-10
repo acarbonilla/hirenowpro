@@ -71,16 +71,21 @@ guardHrApiPaths();
 
 const isProdDeploy =
   process.env.DEPLOYMENT_ENV === "production" || process.env.NODE_ENV === "production";
-const wantsStaticExport = process.env.NEXT_OUTPUT === "export";
 
-if (isProdDeploy && wantsStaticExport) {
-  throw new Error(
-    "[next-config] Invalid config: NEXT_OUTPUT=export is not allowed in production. SSR is required for runtime interview routes."
-  );
+if (isProdDeploy) {
+  // Enforce native SWC (no wasm fallback) for production SSR builds.
+  process.env.NEXT_DISABLE_SWC_WASM = "1";
+
+  // Turbopack is disabled for production builds. Use `next build --webpack`.
+  if (process.env.TURBOPACK) {
+    throw new Error(
+      "[next-config] Turbopack is disabled in production. Use `next build --webpack` for SSR builds."
+    );
+  }
 }
 
 const nextConfig: NextConfig = {
-  ...(!isProdDeploy && wantsStaticExport ? { output: "export" } : {}),
+  // SSR-only: static export is permanently disabled for runtime interview routes.
 };
 
 export default nextConfig;
