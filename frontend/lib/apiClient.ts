@@ -1,16 +1,23 @@
 import axios from "axios";
+import { API_BASE_URL } from "./apiBase";
 import { getInterviewAccessToken, setInterviewAccessToken, setInterviewPublicId } from "@/lib/interviewAccess";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "";
-
-export const api = axios.create({
-  baseURL: `${BASE_URL}/api`,
+export const apiClient = axios.create({
+  baseURL: `${API_BASE_URL}/api`,
+  headers: {
+    "Content-Type": "application/json",
+  },
   withCredentials: true,
 });
 
+export const api = apiClient;
+
 export const publicApi = axios.create({
-  baseURL: `${BASE_URL}/api/public`,
+  baseURL: `${API_BASE_URL}/api/public`,
   timeout: 10000,
+  headers: {
+    "Content-Type": "application/json",
+  },
   withCredentials: true,
 });
 
@@ -45,7 +52,10 @@ publicApi.interceptors.response.use((response) => {
 
 export const createApiClient = (config: Record<string, unknown> = {}) =>
   axios.create({
-    baseURL: `${BASE_URL}/api`,
+    baseURL: `${API_BASE_URL}/api`,
+    headers: {
+      "Content-Type": "application/json",
+    },
     withCredentials: true,
     ...config,
   });

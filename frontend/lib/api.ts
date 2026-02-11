@@ -1,4 +1,4 @@
-import { api, publicApi } from "@/lib/apiClient";
+import { apiClient, publicApi } from "@/lib/apiClient";
 
 type RequestConfig = {
   headers?: Record<string, string>;
@@ -6,10 +6,10 @@ type RequestConfig = {
   [key: string]: unknown;
 };
 
-api.defaults.headers.common["Content-Type"] = "application/json";
+apiClient.defaults.headers.common["Content-Type"] = "application/json";
 
 // Request interceptor
-api.interceptors.request.use(
+apiClient.interceptors.request.use(
   (config) => {
     // List of public endpoints that don't require auth
     // We use partial matching, so "/applicants/" matches "/api/applicants/"
@@ -54,7 +54,7 @@ api.interceptors.request.use(
 );
 
 // Response interceptor
-api.interceptors.response.use(
+apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     // Handle errors globally
@@ -89,10 +89,10 @@ export const applicantAPI = {
     applicant_lng?: number | null;
     is_onsite?: boolean;
     location_source?: string;
-  }) => api.post("/applicants/", data),
+  }) => apiClient.post("/applicants/", data),
 
   // Get applicant by ID
-  getApplicant: (id: number) => api.get(`/applicants/${id}/`),
+  getApplicant: (id: number) => apiClient.get(`/applicants/${id}/`),
 };
 
 export const interviewAPI = {
@@ -108,7 +108,7 @@ export const interviewAPI = {
 
   // Alias for createInterview
   create: (data: { applicant: number; interview_type?: string; position_type: number }) =>
-    api.post("/interviews/", { ...data, interview_type: data.interview_type || "initial_ai" }),
+    apiClient.post("/interviews/", { ...data, interview_type: data.interview_type || "initial_ai" }),
 
   // Get interview details
   getInterview: (publicId: string, config?: RequestConfig) => publicApi.get(`/interviews/${publicId}/`, config),
@@ -129,34 +129,34 @@ export const interviewAPI = {
   submitInterview: (publicId: string) => publicApi.post(`/interviews/${publicId}/submit/`),
 
   // Complete interview
-  completeInterview: (id: number) => api.post(`/interviews/${id}/complete/`),
+  completeInterview: (id: number) => apiClient.post(`/interviews/${id}/complete/`),
 
   // List interviews
   listInterviews: (params?: Record<string, unknown>) => publicApi.get("/interviews/", { params }),
 
   // Get interview analysis
-  getAnalysis: (id: number) => api.get(`/interviews/${id}/analysis/`),
+  getAnalysis: (id: number) => apiClient.get(`/interviews/${id}/analysis/`),
 };
 
 export const publicAPI = publicApi;
-export { api };
+export { apiClient as api };
 
 export const questionAPI = {
   // Get all active questions (with optional position and type filters)
   getQuestions: (publicId: string) => publicApi.get(`/interviews/${publicId}/questions/`),
 
   // Get single question
-  getQuestion: (id: number) => api.get(`/questions/${id}/`),
+  getQuestion: (id: number) => apiClient.get(`/questions/${id}/`),
 };
 
 export const authAPI = {
   // Login
-  login: (data: { username: string; password: string }) => api.post("/auth/login/", data),
-  hrLogin: (data: { username: string; password: string }) => api.post("/auth/hr-login/", data),
-  applicantLogin: (data: { username: string; password: string }) => api.post("/auth/applicant-login/", data),
+  login: (data: { username: string; password: string }) => apiClient.post("/auth/login/", data),
+  hrLogin: (data: { username: string; password: string }) => apiClient.post("/auth/hr-login/", data),
+  applicantLogin: (data: { username: string; password: string }) => apiClient.post("/auth/applicant-login/", data),
 
   // Logout
-  logout: (refreshToken: string) => api.post("/auth/logout/", { refresh_token: refreshToken }),
+  logout: (refreshToken: string) => apiClient.post("/auth/logout/", { refresh_token: refreshToken }),
 
   // Register
   register: (data: {
@@ -167,29 +167,29 @@ export const authAPI = {
     user_type?: string;
     first_name?: string;
     last_name?: string;
-  }) => api.post("/auth/register/", data),
+  }) => apiClient.post("/auth/register/", data),
 
   // Refresh token
-  refreshToken: (refreshToken: string) => api.post("/auth/token/refresh/", { refresh: refreshToken }),
+  refreshToken: (refreshToken: string) => apiClient.post("/auth/token/refresh/", { refresh: refreshToken }),
 
   // Check authentication status
-  checkAuth: (config?: RequestConfig) => api.get("/auth/check/", config),
+  checkAuth: (config?: RequestConfig) => apiClient.get("/auth/check/", config),
 
   // Get user profile
-  getProfile: () => api.get("/auth/profile/"),
+  getProfile: () => apiClient.get("/auth/profile/"),
 
   // Update user profile
   updateProfile: (data: { first_name?: string; last_name?: string; email?: string }) =>
-    api.patch("/auth/profile/", data),
+    apiClient.patch("/auth/profile/", data),
 
   // Change password
   changePassword: (data: { old_password: string; new_password: string; new_password_confirm: string }) =>
-    api.patch("/auth/change-password/", data),
+    apiClient.patch("/auth/change-password/", data),
 };
 
 export const settingsAPI = {
   // Get system settings
-  getSettings: () => api.get("/settings/"),
+  getSettings: () => apiClient.get("/settings/"),
 
   // Update system settings (HR/Admin only)
   updateSettings: (data: {
@@ -199,7 +199,7 @@ export const settingsAPI = {
     interview_expiry_days?: number;
     enable_script_detection?: boolean;
     enable_sentiment_analysis?: boolean;
-  }) => api.put("/settings/1/", data),
+  }) => apiClient.put("/settings/1/", data),
 };
 
-export default api;
+export default apiClient;
