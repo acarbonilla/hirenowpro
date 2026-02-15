@@ -165,12 +165,47 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # REST FRAMEWORK CONFIGURATION
 # ============================
 
+def _get_rate(env_key: str, default_rate: str) -> str:
+    value = os.getenv(env_key)
+    return value.strip() if value else default_rate
+
+
+PUBLIC_INTERVIEW_UPLOAD_RATE = _get_rate(
+    "PUBLIC_INTERVIEW_UPLOAD_RATE",
+    "30/min" if IS_PROD else "300/min",
+)
+PUBLIC_INTERVIEW_SUBMIT_RATE = _get_rate(
+    "PUBLIC_INTERVIEW_SUBMIT_RATE",
+    "10/min" if IS_PROD else "100/min",
+)
+PUBLIC_INTERVIEW_TTS_RATE = _get_rate(
+    "PUBLIC_INTERVIEW_TTS_RATE",
+    "20/min" if IS_PROD else "200/min",
+)
+PUBLIC_INTERVIEW_RETRIEVE_RATE = _get_rate(
+    "PUBLIC_INTERVIEW_RETRIEVE_RATE",
+    "120/min" if IS_PROD else "1200/min",
+)
+PUBLIC_INTERVIEW_UPLOAD_BURST_RATE = _get_rate(
+    "PUBLIC_INTERVIEW_UPLOAD_BURST_RATE",
+    "60/min" if IS_PROD else "600/min",
+)
+PUBLIC_INTERVIEW_UPLOAD_SUSTAINED_RATE = _get_rate(
+    "PUBLIC_INTERVIEW_UPLOAD_SUSTAINED_RATE",
+    "600/hour" if IS_PROD else "6000/hour",
+)
+
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
+    ],
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.ScopedRateThrottle',
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
     ],
     'DEFAULT_EXCEPTION_HANDLER': 'core.exception_handler.json_exception_handler',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
@@ -183,10 +218,15 @@ REST_FRAMEWORK = {
         'login_user': '5/min',
         'anon': '50/min',
         'user': '100/min',
-        'public_interview_retrieve': '30/min',
-        'public_interview_upload': '5/min',
-        'public_interview_submit': '3/min',
-        'public_interview_tts': '5/min',
+        'public_interview_retrieve': PUBLIC_INTERVIEW_RETRIEVE_RATE,
+        'public_interview_upload': PUBLIC_INTERVIEW_UPLOAD_RATE,
+        'public_interview_submit': PUBLIC_INTERVIEW_SUBMIT_RATE,
+        'public_interview_tts': PUBLIC_INTERVIEW_TTS_RATE,
+        'public_interview_upload_burst': PUBLIC_INTERVIEW_UPLOAD_BURST_RATE,
+        'public_interview_upload_sustained': PUBLIC_INTERVIEW_UPLOAD_SUSTAINED_RATE,
+
+         # 🔥 THIS IS THE MISSING ONE
+        'login_ip': '10/min',
     },
 }
 

@@ -30,6 +30,8 @@ from .permissions import InterviewTokenPermission
 from common.throttles import (
     PublicInterviewRetrieveThrottle,
     PublicInterviewUploadThrottle,
+    PublicInterviewUploadBurstThrottle,
+    PublicInterviewUploadSustainedThrottle,
     PublicInterviewSubmitThrottle,
     PublicInterviewTtsThrottle,
 )
@@ -285,7 +287,11 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         if self.action == "retrieve":
             return [PublicInterviewRetrieveThrottle()]
         if self.action == "video_response":
-            return [PublicInterviewUploadThrottle()]
+            return [
+                PublicInterviewUploadThrottle(),
+                PublicInterviewUploadBurstThrottle(),
+                PublicInterviewUploadSustainedThrottle(),
+            ]
         if self.action == "submit":
             return [PublicInterviewSubmitThrottle()]
         if self.action == "tts":

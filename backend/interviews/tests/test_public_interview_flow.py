@@ -1,8 +1,11 @@
+from django.conf import settings as django_settings
+from django.core.cache import cache
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
+from unittest.mock import patch
 
 from applicants.models import Applicant
 from interviews.models import Interview, InterviewQuestion
@@ -21,6 +24,16 @@ class PublicInterviewFlowTests(APITestCase):
             last_name="User",
             email="test@example.com",
             phone="1234567890",
+        )
+
+    def _override_throttle_rates(self, **overrides):
+        rates = dict(django_settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {}))
+        rates.update(overrides)
+        return override_settings(
+            REST_FRAMEWORK={
+                **django_settings.REST_FRAMEWORK,
+                "DEFAULT_THROTTLE_RATES": rates,
+            }
         )
 
     def test_public_interview_resume_requires_token(self):
@@ -118,6 +131,133 @@ class PublicInterviewFlowTests(APITestCase):
             HTTP_AUTHORIZATION=f"Bearer {token}",
         )
         self.assertIn(response.status_code, [status.HTTP_200_OK, status.HTTP_201_CREATED])
+
+    def test_public_interview_upload_allows_five_in_minute(self):
+        with self._override_throttle_rates(
+            public_interview_upload="100/min",
+            public_interview_upload_burst="100/min",
+            public_interview_upload_sustained="1000/hour",
+        ):
+            cache.clear()
+            interview = Interview.objects.create(
+                applicant=self.applicant,
+                position_type=self.position_type,
+                interview_type="initial_ai",
+                status="pending",
+            )
+            questions = []
+            for i in range(5):
+                questions.append(
+                    InterviewQuestion.objects.create(
+                        question_text=f"Question {i + 1}",
+                        order=i + 1,
+                        is_active=True,
+                        category=self.position_type,
+                        position_type=self.position_type,
+                        question_type=self.qtype_general,
+                    )
+                )
+            upload_url = f"/api/public/interviews/{interview.public_id}/video-response/"
+            token = generate_interview_token(interview.public_id)
+
+            for question in questions:
+                video_file = SimpleUploadedFile(
+                    f"answer_{question.id}.webm",
+                    b"dummy-content",
+                    content_type="video/webm",
+                )
+                payload = {
+                    "question_id": question.id,
+                    "video_file_path": video_file,
+                    "duration": "00:00:05",
+                }
+                response = self.client.post(
+                    upload_url,
+                    payload,
+                    format="multipart",
+                    HTTP_AUTHORIZATION=f"Bearer {token}",
+                )
+                self.assertIn(response.status_code, [status.HTTP_200_OK, status.HTTP_201_CREATED])
+
+    def test_public_interview_upload_throttle_blocks_spam(self):
+        with self._override_throttle_rates(
+            public_interview_upload="1000/min",
+            public_interview_upload_burst="2/min",
+            public_interview_upload_sustained="1000/hour",
+        ):
+            cache.clear()
+            interview = Interview.objects.create(
+                applicant=self.applicant,
+                position_type=self.position_type,
+                interview_type="initial_ai",
+                status="pending",
+            )
+            questions = []
+            for i in range(3):
+                questions.append(
+                    InterviewQuestion.objects.create(
+                        question_text=f"Question {i + 1}",
+                        order=i + 1,
+                        is_active=True,
+                        category=self.position_type,
+                        position_type=self.position_type,
+                        question_type=self.qtype_general,
+                    )
+                )
+            upload_url = f"/api/public/interviews/{interview.public_id}/video-response/"
+            token = generate_interview_token(interview.public_id)
+
+            for index, question in enumerate(questions):
+                video_file = SimpleUploadedFile(
+                    f"spam_{question.id}.webm",
+                    b"dummy-content",
+                    content_type="video/webm",
+                )
+                payload = {
+                    "question_id": question.id,
+                    "video_file_path": video_file,
+                    "duration": "00:00:05",
+                }
+                response = self.client.post(
+                    upload_url,
+                    payload,
+                    format="multipart",
+                    HTTP_AUTHORIZATION=f"Bearer {token}",
+                )
+                if index < 2:
+                    self.assertIn(response.status_code, [status.HTTP_200_OK, status.HTTP_201_CREATED])
+                else:
+                    self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+
+    def test_public_interview_submit_throttle_protects(self):
+        with self._override_throttle_rates(public_interview_submit="1/min"):
+            cache.clear()
+            interview = Interview.objects.create(
+                applicant=self.applicant,
+                position_type=self.position_type,
+                interview_type="initial_ai",
+                status="in_progress",
+            )
+            submit_url = f"/api/public/interviews/{interview.public_id}/submit/"
+            token = generate_interview_token(interview.public_id)
+
+            with patch("interviews.public.views.enqueue_interview_processing") as enqueue_mock:
+                enqueue_mock.return_value = None
+                first = self.client.post(
+                    submit_url,
+                    {},
+                    format="json",
+                    HTTP_AUTHORIZATION=f"Bearer {token}",
+                )
+                self.assertEqual(first.status_code, status.HTTP_202_ACCEPTED)
+
+                second = self.client.post(
+                    submit_url,
+                    {},
+                    format="json",
+                    HTTP_AUTHORIZATION=f"Bearer {token}",
+                )
+                self.assertEqual(second.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
 
     def test_invalid_interview_id_returns_404(self):
         fake_public_id = "00000000-0000-0000-0000-000000000000"
