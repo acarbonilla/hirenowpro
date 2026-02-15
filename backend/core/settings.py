@@ -219,6 +219,7 @@ REST_FRAMEWORK = {
 
         # 🔥 THIS IS THE MISSING ONE
         'login_ip': '10/min',
+        "login_user": "10/min",
     },
 }
 
