@@ -60,6 +60,12 @@ const TTS_CONFIG = {
 };
 
 const MAX_ANSWER_SECONDS = 120;
+const UPLOAD_TRACE_ENABLED = process.env.NEXT_PUBLIC_UPLOAD_TRACE === "true";
+
+const logUploadTrace = (event: "upload_start" | "upload_done" | "upload_error", payload: Record<string, unknown>) => {
+  if (!UPLOAD_TRACE_ENABLED) return;
+  console.info(`[upload_trace] ${event}`, payload);
+};
 
 // ─────────────────────
 // Utilities
@@ -108,6 +114,7 @@ export default function InterviewPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [uploadRetryRequired, setUploadRetryRequired] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
   const [timeWarning, setTimeWarning] = useState("");
   const [timeLimitReached, setTimeLimitReached] = useState(false);
@@ -143,7 +150,9 @@ export default function InterviewPage() {
   const [showFullscreenWarning, setShowFullscreenWarning] = useState(false);
 
   const audioContextRef = useRef<AudioContext | null>(null);
-  const uploadLockRef = useRef(false);
+  const inFlightUploadRef = useRef(false);
+  const submitInFlightRef = useRef(false);
+  const uploadAttemptRef = useRef(0);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const audioDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
@@ -878,6 +887,9 @@ export default function InterviewPage() {
     });
 
     setRecordedChunks([]);
+    setUploadRetryRequired(false);
+    uploadAttemptRef.current = 0;
+    inFlightUploadRef.current = false;
     setError("");
     setSuccessMessage("");
     setTimeWarning("");
@@ -1114,10 +1126,11 @@ export default function InterviewPage() {
 
   // Auto-upload when recording stops and chunks are ready
   useEffect(() => {
-    if (!isRecording && recordedChunks.length > 0 && !isUploading) {
+    if (!isRecording && recordedChunks.length > 0 && !isUploading && !uploadRetryRequired) {
       if (skipUploadRef.current) {
         skipUploadRef.current = false;
         setRecordedChunks([]);
+        setUploadRetryRequired(false);
         setSuccessMessage("Question skipped. You can answer it later.");
         if (currentQuestionIndex < questions.length - 1) {
           nextQuestion();
@@ -1125,11 +1138,11 @@ export default function InterviewPage() {
         return;
       }
       const timer = setTimeout(() => {
-        handleUploadVideo();
+        handleUploadVideo("auto");
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [isRecording, recordedChunks.length, isUploading, currentQuestionIndex, questions.length, nextQuestion]);
+  }, [isRecording, recordedChunks.length, isUploading, uploadRetryRequired, currentQuestionIndex, questions.length, nextQuestion]);
 
   useEffect(() => {
     if (!isRecording && recordedChunks.length === 0 && skipUploadRef.current && !isUploading) {
@@ -1141,9 +1154,12 @@ export default function InterviewPage() {
     }
   }, [isRecording, recordedChunks.length, isUploading, currentQuestionIndex, questions.length, nextQuestion]);
 
-  const handleUploadVideo = async () => {
-    if (uploadLockRef.current) {
+  const handleUploadVideo = async (trigger: "auto" | "manual" = "auto") => {
+    if (inFlightUploadRef.current) {
       console.warn("Upload already in progress; skipping duplicate call");
+      return;
+    }
+    if (trigger === "auto" && uploadRetryRequired) {
       return;
     }
     if (recordedChunks.length === 0) {
@@ -1157,9 +1173,18 @@ export default function InterviewPage() {
       return;
     }
 
-    uploadLockRef.current = true;
+    inFlightUploadRef.current = true;
+    uploadAttemptRef.current += 1;
+    const uploadAttempt = uploadAttemptRef.current;
     setIsUploading(true);
+    setUploadRetryRequired(false);
     setError("");
+    logUploadTrace("upload_start", {
+      attempt: uploadAttempt,
+      trigger,
+      interviewId: publicId,
+      questionId: currentQuestion.id,
+    });
 
     try {
       // Create blob from recorded chunks
@@ -1188,9 +1213,21 @@ export default function InterviewPage() {
       }
 
       // Upload video (this includes AI processing on backend, takes 30-60 seconds)
-      const uploadResponse = await interviewAPI.uploadVideoResponse(publicId, formData);
+      const uploadResponse = await interviewAPI.uploadVideoResponse(publicId, formData, {
+        headers: {
+          "X-Upload-Attempt": String(uploadAttempt),
+          "X-Upload-Trigger": trigger,
+        },
+      });
 
       console.log("Video uploaded successfully!", uploadResponse?.data);
+      logUploadTrace("upload_done", {
+        attempt: uploadAttempt,
+        trigger,
+        interviewId: publicId,
+        questionId: currentQuestion.id,
+        status: uploadResponse?.status,
+      });
 
       const transcript = uploadResponse?.data?.video_response?.transcript;
       const errorDetail = uploadResponse?.data?.transcription_error;
@@ -1218,6 +1255,7 @@ export default function InterviewPage() {
       }
 
       setRecordedChunks([]);
+      setUploadRetryRequired(false);
       setRecordingTime(0); // Reset recording time for next question
       setTimeWarning("");
       setTimeLimitReached(false);
@@ -1241,6 +1279,15 @@ export default function InterviewPage() {
       console.error("Error status:", err.response?.status);
       console.error("Error message:", err.message);
 
+      logUploadTrace("upload_error", {
+        attempt: uploadAttempt,
+        trigger,
+        interviewId: publicId,
+        questionId: currentQuestion.id,
+        status: err.response?.status,
+        message: err.response?.data?.detail || err.message,
+      });
+      setUploadRetryRequired(true);
       const errorMessage =
         err.response?.data?.error ||
         err.response?.data?.message ||
@@ -1255,11 +1302,18 @@ export default function InterviewPage() {
       }
     } finally {
       setIsUploading(false);
-      uploadLockRef.current = false;
+      inFlightUploadRef.current = false;
     }
     };
   
     const handleSubmitInterview = async (skipValidation = false) => {
+    if (submitInFlightRef.current) {
+      return;
+    }
+    if (isUploading) {
+      setError("Please wait for the current upload to finish before submitting.");
+      return;
+    }
     // Check if all questions are answered (unless skipping validation for auto-submit)
     const answeredCount = answeredQuestions.size;
     console.log(
@@ -1278,6 +1332,7 @@ export default function InterviewPage() {
     }
 
     // Keep submit snappy for the applicant; disable button briefly to prevent double-clicks
+    submitInFlightRef.current = true;
     setIsSubmitting(true);
     setError("");
 
@@ -1286,6 +1341,7 @@ export default function InterviewPage() {
       if (!interviewToken) {
         setError("Unable to submit interview: missing interview token. Please reopen your interview link.");
         setIsSubmitting(false);
+        submitInFlightRef.current = false;
         return;
       }
 
@@ -1320,6 +1376,7 @@ export default function InterviewPage() {
 
       setError(errorMessage);
       setIsSubmitting(false);
+      submitInFlightRef.current = false;
     }
   };
 
@@ -1845,6 +1902,17 @@ export default function InterviewPage() {
             {error && (
               <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-800 text-sm">{error}</div>
             )}
+            {uploadRetryRequired && !isUploading && recordedChunks.length > 0 && (
+              <div className="mt-3">
+                <button
+                  type="button"
+                  onClick={() => handleUploadVideo("manual")}
+                  className="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm"
+                >
+                  Retry Upload
+                </button>
+              </div>
+            )}
             {successMessage && (
               <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-800 text-sm">
                 {successMessage}
@@ -1976,7 +2044,7 @@ export default function InterviewPage() {
                   <button
                     type="button"
                     onClick={() => handleSubmitInterview()}
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || isUploading}
                     className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center"
                   >
                     <Send className="w-5 h-5 mr-2" />

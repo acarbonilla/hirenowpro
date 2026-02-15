@@ -116,12 +116,14 @@ export const interviewAPI = {
   // Upload video response (no immediate analysis)
   uploadVideoResponse: (publicId: string, formData: FormData, config?: RequestConfig) => {
     return publicApi.post(`/interviews/${publicId}/video-response/`, formData, {
+      ...config,
       headers: {
         "Content-Type": "multipart/form-data",
+        "X-Upload-No-Retry": "1",
         ...(config?.headers || {}),
       },
       timeout: 120000,
-      ...config,
+      "axios-retry": { retries: 0 },
     });
   },
 

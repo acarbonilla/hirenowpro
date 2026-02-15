@@ -6,7 +6,7 @@ import re
 import uuid
 from datetime import timedelta
 from django.conf import settings
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.utils.decorators import method_decorator
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.csrf import csrf_exempt
@@ -41,6 +41,13 @@ from interviews.services import enqueue_interview_processing, build_processing_s
 from security.interview_tokens import extract_bearer_token, generate_interview_token, verify_interview_token
 
 logger = logging.getLogger(__name__)
+
+
+def _client_ip_from_request(request):
+    forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR")
 
 
 def _has_valid_interview_token(request, public_id):
@@ -283,15 +290,79 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         return Response({"detail": "Method not allowed."}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
 
+    def _ensure_upload_request_id(self, request=None):
+        request = request or getattr(self, "request", None)
+        if request is None:
+            return None
+        request_id = getattr(request, "_upload_request_id", None)
+        if request_id:
+            return request_id
+        incoming_request_id = ""
+        if hasattr(request, "headers"):
+            incoming_request_id = (request.headers.get("X-Request-ID", "") or "").strip()
+        request_id = incoming_request_id or str(uuid.uuid4())
+        request._upload_request_id = request_id
+        return request_id
+
+    def throttled(self, request, wait):
+        request_id = self._ensure_upload_request_id(request)
+        throttle_events = getattr(request, "_throttle_events", [])
+        blocked_event = next(
+            (event for event in reversed(throttle_events) if event.get("throttle_decision") == "blocked"),
+            None,
+        )
+        if self.action == "video_response":
+            retry_after_seconds = None
+            if wait is not None:
+                try:
+                    wait_value = float(wait)
+                    retry_after_seconds = int(wait_value) if wait_value.is_integer() else int(wait_value) + 1
+                except (TypeError, ValueError):
+                    retry_after_seconds = None
+            payload = {
+                "code": "upload_throttled",
+                "detail": "Upload rate limit exceeded. Please wait and try again.",
+                "request_id": request_id,
+            }
+            if blocked_event:
+                payload["throttle_scope"] = blocked_event.get("throttle_scope")
+                payload["throttle_class"] = blocked_event.get("throttle_class")
+            if retry_after_seconds is not None:
+                payload["retry_after_seconds"] = retry_after_seconds
+            logger.warning(
+                "public_interview_upload_throttled",
+                extra={
+                    "request_id": request_id,
+                    "interview_uuid": self.kwargs.get(self.lookup_url_kwarg or "public_id"),
+                    "method": getattr(request, "method", None),
+                    "path": getattr(request, "path", None),
+                    "client_ip": _client_ip_from_request(request),
+                    "throttle_event": blocked_event,
+                    "retry_after_seconds": retry_after_seconds,
+                },
+            )
+            return Response(payload, status=status.HTTP_429_TOO_MANY_REQUESTS)
+        return super().throttled(request, wait)
+
     def get_throttles(self):
         if self.action == "retrieve":
             return [PublicInterviewRetrieveThrottle()]
         if self.action == "video_response":
-            return [
+            request_id = self._ensure_upload_request_id()
+            throttles = [
                 PublicInterviewUploadThrottle(),
                 PublicInterviewUploadBurstThrottle(),
                 PublicInterviewUploadSustainedThrottle(),
             ]
+            logger.info(
+                "public_interview_upload_throttles_selected",
+                extra={
+                    "request_id": request_id,
+                    "interview_uuid": self.kwargs.get(self.lookup_url_kwarg or "public_id"),
+                    "throttle_classes": [throttle.__class__.__name__ for throttle in throttles],
+                },
+            )
+            return throttles
         if self.action == "submit":
             return [PublicInterviewSubmitThrottle()]
         if self.action == "tts":
@@ -338,126 +409,172 @@ class PublicInterviewViewSet(viewsets.ModelViewSet):
         authentication_classes=[],
     )
     def video_response(self, request, public_id=None, pk=None):
+        request_id = self._ensure_upload_request_id(request)
         interview = self.get_object()
+        content_length = request.META.get("CONTENT_LENGTH")
+        client_ip = _client_ip_from_request(request)
+        upload_status = status.HTTP_500_INTERNAL_SERVER_ERROR
+        upload_file_size = None
+        question_id = None
 
-        if interview.status in ["submitted", "processing", "completed"]:
-            return Response({"error": "Interview already submitted or completed"}, status=status.HTTP_400_BAD_REQUEST)
-
-        serializer = VideoResponseCreateSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        question_id = serializer.validated_data.get("question_id")
-        question = get_object_or_404(InterviewQuestion, id=question_id, is_active=True)
-
-        existing_response = VideoResponse.objects.filter(interview=interview, question=question).first()
-        if existing_response:
-            return Response({"error": "A response for this question already exists"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Normalize duration for safety (hard cap at 120s)
-        MAX_ANSWER_SECONDS = 120
-        duration = serializer.validated_data["duration"]
-        try:
-            duration_seconds = int(duration.total_seconds())
-        except Exception:
-            duration_seconds = 0
-
-        raw_answer_seconds = request.data.get("answer_duration_seconds")
-        if raw_answer_seconds is not None:
-            try:
-                duration_seconds = int(float(raw_answer_seconds))
-            except (TypeError, ValueError):
-                pass
-
-        time_limit_reached = str(request.data.get("time_limit_reached", "")).lower() in {"true", "1", "yes"}
-        if duration_seconds > MAX_ANSWER_SECONDS:
-            logger.warning(
-                "Answer duration exceeded limit; clamping",
-                extra={
-                    "interview_id": interview.id,
-                    "question_id": question.id,
-                    "duration_seconds": duration_seconds,
-                },
-            )
-            duration_seconds = MAX_ANSWER_SECONDS
-            time_limit_reached = True
-
-        duration_seconds = max(1, duration_seconds)
-        duration = timedelta(seconds=duration_seconds)
-
-        video_response = VideoResponse.objects.create(
-            interview=interview,
-            question=question,
-            video_file_path=serializer.validated_data["video_file_path"],
-            duration=duration,
-            status="uploaded",
-        )
-        try:
-            InterviewAuditLog.objects.create(
-                interview=interview,
-                actor=None,
-                event_type="answer_time_limit" if time_limit_reached else "answer_recorded",
-                metadata={
-                    "question_id": question.id,
-                    "duration_seconds": duration_seconds,
-                    "time_limit_reached": time_limit_reached,
-                },
-            )
-        except Exception:
-            logger.exception("Failed to write answer duration audit log for interview %s", interview.id)
-        now = timezone.now()
-        if interview.status == "pending":
-            interview.status = "in_progress"
-        interview.last_activity_at = now
-        answered_ids = set(interview.video_responses.values_list("question_id", flat=True))
-        interview.current_question_index = _next_question_index(interview, answered_ids)
-        interview.save(update_fields=["status", "last_activity_at", "current_question_index"])
-
-        transcript_error = None
-        transcript_text = ""
-        transcription_task_id = None
-
-        if getattr(settings, "STT_ENABLED", False):
-            if getattr(settings, "INTERVIEW_PROCESSING_SYNC", False):
-                try:
-                    from interviews.deepgram_service import get_deepgram_service
-
-                    deepgram_service = get_deepgram_service()
-                    transcript_data = deepgram_service.transcribe_video(
-                        video_response.video_file_path.path,
-                        video_response_id=video_response.id,
-                    )
-                    transcript_text = transcript_data.get("transcript", "") or ""
-                    video_response.transcript = transcript_text
-                    video_response.save(update_fields=["transcript"])
-                except Exception as exc:  # noqa: BLE001 - log and return consistent contract
-                    transcript_error = str(exc)
-                    transcript_text = ""
-                    video_response.transcript = ""
-                    video_response.save(update_fields=["transcript"])
-            else:
-                transcription_task_id = str(uuid.uuid4())
-
-                def queue_transcription():
-                    transcribe_video_response.apply_async(
-                        args=[video_response.id],
-                        task_id=transcription_task_id,
-                    )
-
-                transaction.on_commit(queue_transcription)
-
-        response_payload = {
-            "video_response": {
-                "id": video_response.id,
-                "question_id": video_response.question_id,
-                "transcript": transcript_text,
-                "status": video_response.status,
+        logger.info(
+            "public_interview_upload_start",
+            extra={
+                "request_id": request_id,
+                "interview_uuid": str(interview.public_id),
+                "method": request.method,
+                "path": request.path,
+                "client_ip": client_ip,
+                "content_length": content_length,
+                "throttle_events": getattr(request, "_throttle_events", []),
             },
-            "transcript_ready": bool(transcript_text),
-            "transcription_error": transcript_error,
-            "transcription_task_id": transcription_task_id,
-        }
+        )
 
-        return Response(response_payload, status=status.HTTP_201_CREATED)
+        try:
+            if interview.status in ["submitted", "processing", "completed"]:
+                upload_status = status.HTTP_400_BAD_REQUEST
+                return Response({"error": "Interview already submitted or completed"}, status=upload_status)
+
+            serializer = VideoResponseCreateSerializer(data=request.data)
+            serializer.is_valid(raise_exception=True)
+
+            question_id = serializer.validated_data.get("question_id")
+            question = get_object_or_404(InterviewQuestion, id=question_id, is_active=True)
+            upload_file_size = getattr(serializer.validated_data.get("video_file_path"), "size", None)
+
+            existing_response = VideoResponse.objects.filter(interview=interview, question=question).first()
+            if existing_response:
+                upload_status = status.HTTP_400_BAD_REQUEST
+                return Response({"error": "A response for this question already exists"}, status=upload_status)
+
+            # Normalize duration for safety (hard cap at 120s)
+            MAX_ANSWER_SECONDS = 120
+            duration = serializer.validated_data["duration"]
+            try:
+                duration_seconds = int(duration.total_seconds())
+            except Exception:
+                duration_seconds = 0
+
+            raw_answer_seconds = request.data.get("answer_duration_seconds")
+            if raw_answer_seconds is not None:
+                try:
+                    duration_seconds = int(float(raw_answer_seconds))
+                except (TypeError, ValueError):
+                    pass
+
+            time_limit_reached = str(request.data.get("time_limit_reached", "")).lower() in {"true", "1", "yes"}
+            if duration_seconds > MAX_ANSWER_SECONDS:
+                logger.warning(
+                    "Answer duration exceeded limit; clamping",
+                    extra={
+                        "interview_id": interview.id,
+                        "question_id": question.id,
+                        "duration_seconds": duration_seconds,
+                    },
+                )
+                duration_seconds = MAX_ANSWER_SECONDS
+                time_limit_reached = True
+
+            duration_seconds = max(1, duration_seconds)
+            duration = timedelta(seconds=duration_seconds)
+
+            video_response = VideoResponse.objects.create(
+                interview=interview,
+                question=question,
+                video_file_path=serializer.validated_data["video_file_path"],
+                duration=duration,
+                status="uploaded",
+            )
+            try:
+                InterviewAuditLog.objects.create(
+                    interview=interview,
+                    actor=None,
+                    event_type="answer_time_limit" if time_limit_reached else "answer_recorded",
+                    metadata={
+                        "question_id": question.id,
+                        "duration_seconds": duration_seconds,
+                        "time_limit_reached": time_limit_reached,
+                    },
+                )
+            except Exception:
+                logger.exception("Failed to write answer duration audit log for interview %s", interview.id)
+            now = timezone.now()
+            if interview.status == "pending":
+                interview.status = "in_progress"
+            interview.last_activity_at = now
+            answered_ids = set(interview.video_responses.values_list("question_id", flat=True))
+            interview.current_question_index = _next_question_index(interview, answered_ids)
+            interview.save(update_fields=["status", "last_activity_at", "current_question_index"])
+
+            transcript_error = None
+            transcript_text = ""
+            transcription_task_id = None
+
+            if getattr(settings, "STT_ENABLED", False):
+                if getattr(settings, "INTERVIEW_PROCESSING_SYNC", False):
+                    try:
+                        from interviews.deepgram_service import get_deepgram_service
+
+                        deepgram_service = get_deepgram_service()
+                        transcript_data = deepgram_service.transcribe_video(
+                            video_response.video_file_path.path,
+                            video_response_id=video_response.id,
+                        )
+                        transcript_text = transcript_data.get("transcript", "") or ""
+                        video_response.transcript = transcript_text
+                        video_response.save(update_fields=["transcript"])
+                    except Exception as exc:  # noqa: BLE001 - log and return consistent contract
+                        transcript_error = str(exc)
+                        transcript_text = ""
+                        video_response.transcript = ""
+                        video_response.save(update_fields=["transcript"])
+                else:
+                    transcription_task_id = str(uuid.uuid4())
+
+                    def queue_transcription():
+                        transcribe_video_response.apply_async(
+                            args=[video_response.id],
+                            task_id=transcription_task_id,
+                        )
+
+                    transaction.on_commit(queue_transcription)
+
+            response_payload = {
+                "video_response": {
+                    "id": video_response.id,
+                    "question_id": video_response.question_id,
+                    "transcript": transcript_text,
+                    "status": video_response.status,
+                },
+                "transcript_ready": bool(transcript_text),
+                "transcription_error": transcript_error,
+                "transcription_task_id": transcription_task_id,
+            }
+
+            upload_status = status.HTTP_201_CREATED
+            return Response(response_payload, status=upload_status)
+        except Exception as exc:
+            if isinstance(exc, Http404):
+                upload_status = status.HTTP_404_NOT_FOUND
+            else:
+                upload_status = getattr(exc, "status_code", status.HTTP_500_INTERNAL_SERVER_ERROR)
+            raise
+        finally:
+            logger.info(
+                "public_interview_upload_complete",
+                extra={
+                    "request_id": request_id,
+                    "interview_uuid": str(interview.public_id),
+                    "method": request.method,
+                    "path": request.path,
+                    "client_ip": client_ip,
+                    "content_length": content_length,
+                    "uploaded_file_size": upload_file_size,
+                    "question_id": question_id,
+                    "status_code": upload_status,
+                    "throttle_events": getattr(request, "_throttle_events", []),
+                },
+            )
 
     @action(
         detail=True,

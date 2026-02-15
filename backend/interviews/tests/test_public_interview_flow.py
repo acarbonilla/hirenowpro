@@ -228,6 +228,55 @@ class PublicInterviewFlowTests(APITestCase):
                     self.assertIn(response.status_code, [status.HTTP_200_OK, status.HTTP_201_CREATED])
                 else:
                     self.assertEqual(response.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+                    self.assertEqual(response.data.get("code"), "upload_throttled")
+                    self.assertIn("detail", response.data)
+                    self.assertIn("request_id", response.data)
+
+    def test_public_interview_upload_missing_scope_does_not_500(self):
+        rates = dict(django_settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {}))
+        rates.pop("public_interview_upload", None)
+        rates.pop("public_interview_upload_burst", None)
+        rates.pop("public_interview_upload_sustained", None)
+        with override_settings(
+            REST_FRAMEWORK={
+                **django_settings.REST_FRAMEWORK,
+                "DEFAULT_THROTTLE_RATES": rates,
+            }
+        ):
+            cache.clear()
+            interview = Interview.objects.create(
+                applicant=self.applicant,
+                position_type=self.position_type,
+                interview_type="initial_ai",
+                status="pending",
+            )
+            question = InterviewQuestion.objects.create(
+                question_text="Guardrail scope test",
+                order=1,
+                is_active=True,
+                category=self.position_type,
+                position_type=self.position_type,
+                question_type=self.qtype_general,
+            )
+            upload_url = f"/api/public/interviews/{interview.public_id}/video-response/"
+            token = generate_interview_token(interview.public_id)
+            payload = {
+                "question_id": question.id,
+                "video_file_path": SimpleUploadedFile("guardrail.webm", b"dummy-content", content_type="video/webm"),
+                "duration": "00:00:05",
+            }
+
+            response = self.client.post(
+                upload_url,
+                payload,
+                format="multipart",
+                HTTP_AUTHORIZATION=f"Bearer {token}",
+            )
+            self.assertNotEqual(response.status_code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+            self.assertIn(
+                response.status_code,
+                [status.HTTP_200_OK, status.HTTP_201_CREATED, status.HTTP_429_TOO_MANY_REQUESTS],
+            )
 
     def test_public_interview_submit_throttle_protects(self):
         with self._override_throttle_rates(public_interview_submit="1/min"):
