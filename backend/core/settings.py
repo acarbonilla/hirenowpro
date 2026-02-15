@@ -202,30 +202,22 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
     ],
-    'DEFAULT_THROTTLE_CLASSES': [
-        'rest_framework.throttling.ScopedRateThrottle',
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle',
-    ],
-    'DEFAULT_EXCEPTION_HANDLER': 'core.exception_handler.json_exception_handler',
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
-    'DEFAULT_THROTTLE_RATES': {
-        'registration_burst': '10/min',
-        'registration_hourly': '5/hour',
-        'registration_daily': '10/day',
-        'login_ip': '10/min',
-        'login_user': '5/min',
-        'anon': '50/min',
-        'user': '100/min',
-        'public_interview_retrieve': PUBLIC_INTERVIEW_RETRIEVE_RATE,
-        'public_interview_upload': PUBLIC_INTERVIEW_UPLOAD_RATE,
-        'public_interview_submit': PUBLIC_INTERVIEW_SUBMIT_RATE,
-        'public_interview_tts': PUBLIC_INTERVIEW_TTS_RATE,
-        'public_interview_upload_burst': PUBLIC_INTERVIEW_UPLOAD_BURST_RATE,
-        'public_interview_upload_sustained': PUBLIC_INTERVIEW_UPLOAD_SUSTAINED_RATE,
 
-         # 🔥 THIS IS THE MISSING ONE
+    'DEFAULT_THROTTLE_RATES': {
+        # Interview
+        'public_interview_retrieve': '60/min',
+        'public_interview_submit': '30/min',
+        'public_interview_tts': '30/min',
+        'public_interview_upload': '120/min',
+
+        # Registration
+        'registration_burst': '50/min',
+        'registration_hourly': '200/hour',
+        'registration_daily': '500/day',
+
+        # 🔥 THIS IS THE MISSING ONE
         'login_ip': '10/min',
     },
 }
