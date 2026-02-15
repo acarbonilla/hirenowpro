@@ -211,6 +211,8 @@ REST_FRAMEWORK = {
         'public_interview_submit': '30/min',
         'public_interview_tts': '30/min',
         'public_interview_upload': '120/min',
+        'public_interview_upload_burst': '60/min',
+
 
         # Registration
         'registration_burst': '50/min',
