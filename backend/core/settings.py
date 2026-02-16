@@ -270,6 +270,9 @@ else:
 CORS_ALLOW_HEADERS = list(default_headers) + [
     "authorization",
     "x-portal",
+    "x-upload-attempt",
+    "x-upload-trigger",
+    "x-upload-no-retry",
 ]
 
 
