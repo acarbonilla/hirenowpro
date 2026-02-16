@@ -128,7 +128,8 @@ export const interviewAPI = {
   },
 
   // Submit interview for processing
-  submitInterview: (publicId: string) => publicApi.post(`/interviews/${publicId}/submit/`),
+  submitInterview: (publicId: string, data: Record<string, unknown> = {}, config?: RequestConfig) =>
+    publicApi.post(`/interviews/${publicId}/submit/`, data, { timeout: 60000, ...(config || {}) }),
 
   // Complete interview
   completeInterview: (id: number) => apiClient.post(`/interviews/${id}/complete/`),

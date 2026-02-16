@@ -152,6 +152,7 @@ export default function InterviewPage() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const inFlightUploadRef = useRef(false);
   const submitInFlightRef = useRef(false);
+  const autoSubmitPendingRef = useRef(false);
   const uploadAttemptRef = useRef(0);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const audioSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
@@ -217,7 +218,7 @@ export default function InterviewPage() {
     }
   }, []);
 
-  const buildIntegrityPayload = () => {
+  const buildIntegrityPayload = useCallback(() => {
     const base = integrityRef.current;
     const now = typeof performance !== "undefined" ? performance.now() : Date.now();
     let blurSeconds = base.focus.total_blur_seconds;
@@ -232,7 +233,7 @@ export default function InterviewPage() {
       },
       captured_at: new Date().toISOString(),
     };
-  };
+  }, []);
 
   const persistIntegrity = useCallback(
     async (mode: "checkpoint" | "submit" | "unload" = "checkpoint") => {
@@ -275,7 +276,7 @@ export default function InterviewPage() {
         console.warn("Integrity logging failed", err);
       }
     },
-    [publicId]
+    [publicId, buildIntegrityPayload]
   );
 
   const handleIntegrityAcknowledge = () => {
@@ -715,6 +716,12 @@ export default function InterviewPage() {
   useEffect(() => {
     return () => stopSilenceDetection();
   }, [stopSilenceDetection]);
+
+  useEffect(() => {
+    return () => {
+      autoSubmitPendingRef.current = false;
+    };
+  }, []);
 
   const startSilenceDetection = useCallback((stream: MediaStream) => {
     if (audioContextRef.current) {
@@ -1266,12 +1273,9 @@ export default function InterviewPage() {
         setSuccessMessage("");
         nextQuestion();
       } else {
-        // Last question - auto-submit after 3 seconds
+        // Last question - queue auto-submit and let gating effect trigger when stable.
         console.log("Last question answered! Total answered:", totalAnswered, "of", questions.length);
-        setTimeout(() => {
-          console.log("Auto-submitting interview... (all questions completed)");
-          handleSubmitInterview(true); // Pass true to skip validation
-        }, 3000);
+        autoSubmitPendingRef.current = true;
       }
     } catch (err: any) {
       console.error("Upload error:", err);
@@ -1306,7 +1310,7 @@ export default function InterviewPage() {
     }
     };
   
-    const handleSubmitInterview = async (skipValidation = false) => {
+  const handleSubmitInterview = useCallback(async (skipValidation = false) => {
     if (submitInFlightRef.current) {
       return;
     }
@@ -1314,6 +1318,9 @@ export default function InterviewPage() {
       setError("Please wait for the current upload to finish before submitting.");
       return;
     }
+
+    autoSubmitPendingRef.current = false;
+
     // Check if all questions are answered (unless skipping validation for auto-submit)
     const answeredCount = answeredQuestions.size;
     console.log(
@@ -1335,29 +1342,29 @@ export default function InterviewPage() {
     submitInFlightRef.current = true;
     setIsSubmitting(true);
     setError("");
+    let shouldUnlockSubmit = true;
 
     try {
       const interviewToken = getInterviewAccessToken();
       if (!interviewToken) {
         setError("Unable to submit interview: missing interview token. Please reopen your interview link.");
-        setIsSubmitting(false);
-        submitInFlightRef.current = false;
         return;
       }
 
       console.log("Submitting interview:", publicId);
       console.log("Questions answered:", answeredCount, "of", questions.length);
 
-        const integrityPayload = buildIntegrityPayload();
-        await publicApi.post(`/interviews/${publicId}/submit/`, { integrity: integrityPayload });
+      const integrityPayload = buildIntegrityPayload();
+      await interviewAPI.submitInterview(publicId, { integrity: integrityPayload });
 
-        console.log("Interview submitted successfully! Redirecting to completion page...");
-        if (typeof window !== "undefined") {
-          sessionStorage.removeItem(resumeStorageKey);
-          sessionStorage.removeItem(integrityConsentStorageKey);
-        }
+      console.log("Interview submitted successfully! Redirecting to completion page...");
+      if (typeof window !== "undefined") {
+        sessionStorage.removeItem(resumeStorageKey);
+        sessionStorage.removeItem(integrityConsentStorageKey);
+      }
       // Redirect to a friendly completion screen; user can then choose
       // to view processing status or return to dashboard.
+      shouldUnlockSubmit = false;
       router.push(`/interview-complete?id=${publicId}`);
     } catch (err: any) {
       console.error("Submit error:", err);
@@ -1375,14 +1382,38 @@ export default function InterviewPage() {
       }
 
       setError(errorMessage);
-      setIsSubmitting(false);
-      submitInFlightRef.current = false;
+    } finally {
+      if (shouldUnlockSubmit) {
+        setIsSubmitting(false);
+        submitInFlightRef.current = false;
+      }
     }
-  };
+  }, [
+    isUploading,
+    answeredQuestions.size,
+    questions.length,
+    publicId,
+    resumeStorageKey,
+    integrityConsentStorageKey,
+    router,
+    buildIntegrityPayload,
+  ]);
 
   // ─────────────────────
   // Render
   // ─────────────────────
+  useEffect(() => {
+    const allAnswered = questions.length > 0 && answeredQuestions.size === questions.length;
+    if (!allAnswered) return;
+    if (isUploading || isRecording) return;
+    if (submitInFlightRef.current) return;
+    if (!autoSubmitPendingRef.current) return;
+
+    autoSubmitPendingRef.current = false;
+    console.log("Auto-submitting interview... (all questions completed and stable)");
+    handleSubmitInterview(true);
+  }, [answeredQuestions.size, questions.length, isUploading, isRecording, handleSubmitInterview]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center">
